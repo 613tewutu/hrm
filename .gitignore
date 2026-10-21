@@ -1,0 +1,7 @@
+/.xmake/
+/build/
+/compile_commands.json
+/.cache/
+/.direnv/
+/result
+/result-*
