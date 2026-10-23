@@ -10,12 +10,19 @@
 namespace hrm_app {
 namespace {
 
+/// Throw a configuration error when a required schema condition is false.
 void require(bool condition, const std::string &message) {
   if (!condition) {
     throw std::runtime_error(message);
   }
 }
 
+/// Convert a YAML sequence to exact signed 64-bit values.
+///
+/// @param node Sequence whose scalar tokens are validated without partial conversions.
+/// @param field Field name included in validation diagnostics.
+/// @return Values in their original order.
+/// @throws std::runtime_error If the sequence or any integer token is invalid.
 std::vector<hrm::Value> values(const YAML::Node &node, const std::string &field) {
   require(node.IsSequence(), field + " must be a sequence of integers");
   std::vector<hrm::Value> result;
@@ -45,28 +52,36 @@ GameConfig load_config(const std::filesystem::path &path) {
       GameLevel level;
       auto &definition = level.definition;
       definition.id = node["id"].as<int>();
-      require(definition.id > 0 && ids.insert(definition.id).second,
-              "level IDs must be unique and positive");
+      require(
+        definition.id > 0 && ids.insert(definition.id).second,
+        "level IDs must be unique and positive"
+      );
       level.title = node["title"].as<std::string>();
       definition.description = node["description"].as<std::string>();
       definition.input = values(node["input"], "input");
       definition.target = values(node["target"], "target");
       const auto floor = hrm::parse_integer(node["floor_size"].as<std::string>());
-      require(floor.error == hrm::ErrorCode::None && floor.value >= 0 && floor.value <= 1024,
-              "floor_size must be between 0 and 1024");
+      require(
+        floor.error == hrm::ErrorCode::None && floor.value >= 0 && floor.value <= 1024,
+        "floor_size must be between 0 and 1024"
+      );
       definition.floor_size = static_cast<std::size_t>(floor.value);
       const auto instructions = node["instructions"];
-      require(instructions.IsSequence() && instructions.size() > 0,
-              "instructions must be a nonempty sequence");
+      require(
+        instructions.IsSequence() && instructions.size() > 0,
+        "instructions must be a nonempty sequence"
+      );
       for (const auto &item : instructions) {
         const auto name = item.as<std::string>();
         auto decoded = hrm::decode_line(name);
         if (decoded.error == hrm::ErrorCode::WrongOperandCount) {
           decoded = hrm::decode_line(name + " 0");
         }
-        require(decoded.error == hrm::ErrorCode::None &&
-                    name.find_first_of(" \t\r\n") == std::string::npos,
-                "unknown instruction: " + name);
+        require(
+          decoded.error == hrm::ErrorCode::None &&
+            name.find_first_of(" \t\r\n") == std::string::npos,
+          "unknown instruction: " + name
+        );
         definition.allowed_opcodes.set(static_cast<std::size_t>(decoded.instruction.opcode));
       }
       config.levels.push_back(std::move(level));

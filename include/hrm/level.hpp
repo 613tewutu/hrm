@@ -17,7 +17,11 @@ struct LevelDefinition {
   std::bitset<8> allowed_opcodes;
 };
 
-// Return false for an unknown ID, leaving the destination unchanged.
+/// Load one of the three built-in assignment levels.
+///
+/// @param id One-based built-in level ID.
+/// @param destination Receives the complete level definition on success.
+/// @return True when the ID exists; false leaves destination unchanged.
 bool load_builtin_level(int id, LevelDefinition &destination);
 
 } // namespace hrm

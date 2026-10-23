@@ -11,9 +11,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-COMMAND = re.compile(
-    r"│[▶ ]*(\d+)\s+(inbox|outbox|add|sub|copyto|copyfrom|jumpifzero|jump)\b"
-)
+COMMAND = re.compile(r"│[▶ ]*(\d+)\s+(inbox|outbox|add|sub|copyto|copyfrom|jumpifzero|jump)\b")
 
 
 class Terminal:
@@ -39,9 +37,7 @@ class Terminal:
 
     def command(self, *arguments: str) -> str:
         """Run a command against this test's private server."""
-        return subprocess.check_output(
-            self.base + list(arguments), text=True, timeout=10
-        )
+        return subprocess.check_output(self.base + list(arguments), text=True, timeout=10)
 
     def close(self) -> None:
         """Stop only this test's server and remove its temporary directory."""
@@ -71,9 +67,7 @@ class Terminal:
         """Send a press, left-button drag, or release at zero-based coordinates."""
         code = 32 if motion == "move" else 0
         end = "m" if motion == "release" else "M"
-        self.command(
-            "send-keys", "-t", "test", "-l", f"\x1b[<{code};{x + 1};{y + 1}{end}"
-        )
+        self.command("send-keys", "-t", "test", "-l", f"\x1b[<{code};{x + 1};{y + 1}{end}")
         time.sleep(0.08)
 
     def locate(self, needle: str) -> tuple[int, int]:
@@ -235,9 +229,7 @@ class DragTests(unittest.TestCase):
         for _ in range(15):
             ui.click_palette("inbox")
         ui.mouse(*ui.palette("outbox"), "press")
-        title_y = next(
-            y for y, line in enumerate(ui.screen().splitlines()) if "COMMANDS" in line
-        )
+        title_y = next((y for y, line in enumerate(ui.screen().splitlines()) if "COMMANDS" in line))
         ui.mouse(110, title_y + 7, "move")
         stack_left = ui.palette("inbox")[0]
         deadline = time.monotonic() + 4

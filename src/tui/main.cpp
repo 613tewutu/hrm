@@ -40,19 +40,35 @@ const Color amber = Color::Yellow;
 const Color blue = Color::Blue;
 const Color red = Color::Red;
 
+/// Wrap content in a rounded card using the terminal's palette.
+///
+/// @param content Already-styled card contents.
+/// @param edge Border accent, inherited by otherwise unstyled children.
+/// @return A card element using the terminal-default background.
 Element card(Element content, Color edge = outline) {
   return content | borderRounded | color(edge) | bgcolor(surface);
 }
 
+/// Create a focusable rounded action button with a semantic click handler.
+///
+/// @param label Static text or a live label reference owned by the application.
+/// @param handler Action to invoke for mouse or keyboard activation.
+/// @return A button with the same border and focus treatment as command cards.
 Component action(ConstStringRef label, std::function<void()> handler) {
   auto options = ButtonOption::Simple();
   options.transform = [](const EntryState &state) {
-    return card(text(" " + state.label + " ") | color(state.focused ? teal : ink),
-                state.focused ? teal : outline);
+    return card(
+      text(" " + state.label + " ") | color(state.focused ? teal : ink),
+      state.focused ? teal : outline
+    );
   };
   return Button(label, std::move(handler), options);
 }
 
+/// Format a value sequence for the level's target description.
+///
+/// @param values Ordered target values.
+/// @return Comma-separated numbers, or an explicit empty-sequence label.
 std::string sequence(const std::vector<hrm::Value> &values) {
   std::string result;
   for (const auto value : values) {
@@ -64,6 +80,7 @@ std::string sequence(const std::vector<hrm::Value> &values) {
   return result.empty() ? "(empty)" : result;
 }
 
+/// Return a player-facing explanation for a kernel error code.
 std::string error_text(hrm::ErrorCode code) {
   switch (code) {
   case hrm::ErrorCode::EmptyHand:
@@ -89,6 +106,7 @@ std::string error_text(hrm::ErrorCode code) {
   }
 }
 
+/// Route focus, selection, and keyboard events through the scrollable command stack.
 class CommandStack : public ComponentBase {
 public:
   std::function<Element(bool, std::vector<Box> &)> draw;
@@ -97,11 +115,27 @@ public:
   std::function<void()> confirm;
   std::function<void()> remove;
 
-  const std::vector<Box> &boxes() const { return boxes_; }
-  const Box &viewport() const { return viewport_; }
+  /// Return the most recently laid-out card bounds for hit testing.
+  const std::vector<Box> &boxes() const {
+    return boxes_;
+  }
+  /// Return the visible stack bounds for drop and scroll hit testing.
+  const Box &viewport() const {
+    return viewport_;
+  }
 
-  bool Focusable() const override { return true; }
-  Element OnRender() override { return draw(Focused(), boxes_) | reflect(viewport_); }
+  /// Keep the command stack reachable through keyboard focus traversal.
+  bool Focusable() const override {
+    return true;
+  }
+  /// Render the stack and retain its visible bounds for subsequent events.
+  Element OnRender() override {
+    return draw(Focused(), boxes_) | reflect(viewport_);
+  }
+  /// Dispatch selection, scrolling, confirmation, and deletion events.
+  ///
+  /// @param event Mouse or keyboard event from the component hierarchy.
+  /// @return True when the stack consumes the event; false lets sibling controls handle it.
   bool OnEvent(Event event) override {
     if (event.is_mouse()) {
       const auto &mouse = event.mouse();
@@ -147,9 +181,15 @@ private:
   Box viewport_;
 };
 
+/// Own per-level editors and coordinate the terminal workroom on one UI thread.
 class Application {
 public:
-  explicit Application(hrm_app::GameConfig config, int initial_level) : config_(std::move(config)) {
+  /// Create empty editor sessions and assemble their shared terminal controls.
+  ///
+  /// @param config Validated level definitions and display metadata to own.
+  /// @param initial_level Level ID selected at startup, validated by the caller.
+  explicit Application(hrm_app::GameConfig config, int initial_level)
+    : config_(std::move(config)) {
     for (std::size_t i = 0; i < config_.levels.size(); ++i) {
       const auto &level = config_.levels[i];
       level_names_.push_back(std::to_string(level.definition.id) + " / " + level.title);
@@ -163,13 +203,20 @@ public:
     build_components();
   }
 
-  Component component() const { return root_; }
+  /// Return the root interactive component.
+  Component component() const {
+    return root_;
+  }
+  /// Set explicit terminal dimensions for a noninteractive preview.
   void set_preview_size(int width, int height) {
     preview_width_ = width;
     preview_height_ = height;
   }
   std::function<void()> quit;
 
+  /// Advance continuous playback or drag auto-scrolling when its timer is due.
+  ///
+  /// @param now Monotonic UI-loop time used for playback and scroll deadlines.
   void tick(std::chrono::steady_clock::time_point now) {
     if (drag_) {
       const auto target = drop_target(drag_->x, drag_->y);
@@ -203,7 +250,10 @@ public:
       redraw_ = true;
     }
   }
-  bool needs_redraw() { return std::exchange(redraw_, false); }
+  /// Consume the pending timed-redraw flag.
+  bool needs_redraw() {
+    return std::exchange(redraw_, false);
+  }
 
 private:
   struct DragState {
@@ -217,8 +267,16 @@ private:
     std::optional<RowId> before;
   };
 
-  hrm_app::Session &session() { return *sessions_[static_cast<std::size_t>(level_index_)]; }
+  /// Return the currently selected level's session.
+  hrm_app::Session &session() {
+    return *sessions_[static_cast<std::size_t>(level_index_)];
+  }
 
+  /// Resolve a pointer position to an insertion boundary in the visible stack.
+  ///
+  /// @param x Horizontal terminal-cell coordinate.
+  /// @param y Vertical terminal-cell coordinate.
+  /// @return A stable row ID, zero for append, or no value outside the stack.
   std::optional<RowId> drop_target(int x, int y) {
     if (!stack_->viewport().Contain(x, y)) {
       return std::nullopt;
@@ -233,6 +291,12 @@ private:
     return RowId(0);
   }
 
+  /// Capture a command and its exact grab point without modifying the program.
+  ///
+  /// @param opcode Available palette opcode or existing command opcode.
+  /// @param source Existing command ID, or zero for a new palette command.
+  /// @param mouse Initial press position in terminal cells.
+  /// @param source_box Laid-out source bounds defining the preserved size and grab offset.
   void begin_drag(hrm::Opcode opcode, RowId source, const Mouse &mouse, const Box &source_box) {
     playing_ = false;
     DragState state;
@@ -246,11 +310,11 @@ private:
     if (source) {
       const auto compiled = session().editor().compile();
       const auto position =
-          std::find(compiled.instruction_rows.begin(), compiled.instruction_rows.end(), source);
+        std::find(compiled.instruction_rows.begin(), compiled.instruction_rows.end(), source);
       const auto number =
-          static_cast<std::size_t>(position - compiled.instruction_rows.begin()) + 1;
+        static_cast<std::size_t>(position - compiled.instruction_rows.begin()) + 1;
       state.label = (session().current_row() == source ? "▶ " : "  ") + std::to_string(number) +
-                    "  " + hrm_app::opcode_name(opcode);
+        "  " + hrm_app::opcode_name(opcode);
       if (hrm_app::uses_floor(opcode)) {
         state.label += "  " + state.operand;
       } else if (hrm_app::is_jump(opcode)) {
@@ -267,6 +331,10 @@ private:
     message_ = "Drag to an insertion line; release outside the stack or press Esc to cancel.";
   }
 
+  /// Coordinate drag start, movement, cancellation, and atomic release-time edits.
+  ///
+  /// @param mouse Current mouse event and cell coordinates.
+  /// @return True while a drag owns the event, including the final release.
   bool drag_mouse(const Mouse &mouse) {
     if (drag_) {
       drag_->x = mouse.x;
@@ -280,22 +348,22 @@ private:
           if (drag.source) {
             choose(drag.source);
             message_ = "Card selected. Drag to reorder, or click a palette instruction.";
-          } else if (palette_boxes_[static_cast<std::size_t>(drag.opcode)].Contain(mouse.x,
-                                                                                   mouse.y)) {
+          } else if (palette_boxes_[static_cast<std::size_t>(drag.opcode)]
+                       .Contain(mouse.x, mouse.y)) {
             add(drag.opcode);
           }
         } else if (drag.before) {
           RowId id = drag.source;
-          const bool changed = id ? session().edit().move_before(id, *drag.before)
-                                  : (id = session().edit().insert_before(*drag.before, drag.opcode,
-                                                                         drag.operand)) != 0;
+          const bool changed = id
+            ? session().edit().move_before(id, *drag.before)
+            : (id = session().edit().insert_before(*drag.before, drag.opcode, drag.operand)) != 0;
           if (changed) {
             select(id);
             edited();
             stack_->TakeFocus();
             message_ = hrm_app::is_jump(drag.opcode) && !drag.source
-                           ? "Jump inserted. Press T to choose its landing card."
-                           : "Command dropped. Edits reset the simulation.";
+              ? "Jump inserted. Press T to choose its landing card."
+              : "Command dropped. Edits reset the simulation.";
           } else {
             message_ = "Command kept in its current position.";
           }
@@ -310,7 +378,7 @@ private:
     }
     for (std::size_t i = 0; i < palette_boxes_.size(); ++i) {
       if (session().machine().level().allowed_opcodes.test(i) &&
-          palette_boxes_[i].Contain(mouse.x, mouse.y)) {
+        palette_boxes_[i].Contain(mouse.x, mouse.y)) {
         palette_buttons_[i]->TakeFocus();
         begin_drag(static_cast<hrm::Opcode>(i), 0, mouse, palette_boxes_[i]);
         return true;
@@ -329,28 +397,35 @@ private:
     }
     return false;
   }
+  /// Select a stable editor row and synchronize the floor-operand field.
   void select(RowId id) {
     selected_ = id;
     const auto *row = session().editor().find(id);
     operand_text_ = row && !row->landing && hrm_app::uses_floor(row->opcode) ? row->operand : "0";
   }
+  /// Pause playback, leave link mode, and rebuild the machine after an editor mutation.
   void edited() {
     playing_ = false;
     linking_ = 0;
     session().reset();
   }
+  /// Insert an allowed palette command after the selected row and restart simulation.
+  ///
+  /// @param opcode Palette instruction to add using the current floor-operand text.
   void add(hrm::Opcode opcode) {
     select(session().edit().insert_command(selected_, opcode, operand_text_));
     edited();
     message_ = hrm_app::is_jump(opcode)
-                   ? "Press T, select a destination, then Enter to link this jump."
-                   : "Command inserted. Edits reset the simulation.";
+      ? "Press T, select a destination, then Enter to link this jump."
+      : "Command inserted. Edits reset the simulation.";
     stack_->TakeFocus();
   }
+  /// Delete the selected card and repair selection after landing cleanup.
   void remove() {
     const auto rows = session().editor().rows();
-    const auto it = std::find_if(rows.begin(), rows.end(),
-                                 [&](const auto &row) { return row.id == selected_; });
+    const auto it = std::find_if(rows.begin(), rows.end(), [&](const auto &row) {
+      return row.id == selected_;
+    });
     const auto index = static_cast<std::size_t>(it - rows.begin());
     session().edit().erase(selected_);
     const auto &remaining = session().editor().rows();
@@ -359,14 +434,19 @@ private:
     edited();
     message_ = "Card removed. Jumps to a deleted landing card need a new link.";
   }
+  /// Move editor selection by a bounded row offset.
   void move(int delta) {
     const auto &rows = session().editor().rows();
-    const auto it = std::find_if(rows.begin(), rows.end(),
-                                 [&](const auto &row) { return row.id == selected_; });
-    const auto index = std::clamp(static_cast<int>(it - rows.begin()) + delta, 0,
-                                  static_cast<int>(rows.size()) - 1);
+    const auto it = std::find_if(rows.begin(), rows.end(), [&](const auto &row) {
+      return row.id == selected_;
+    });
+    const auto index =
+      std::clamp(static_cast<int>(it - rows.begin()) + delta, 0, static_cast<int>(rows.size()) - 1);
     select(rows[static_cast<std::size_t>(index)].id);
   }
+  /// Select a row or complete an in-progress jump link to it.
+  ///
+  /// @param id Existing destination or selection row ID.
   void choose(RowId id) {
     if (linking_) {
       const auto source = linking_;
@@ -379,6 +459,7 @@ private:
       select(id);
     }
   }
+  /// Enter target selection for a selected jump, or show why linking is unavailable.
   void link() {
     const auto *row = session().editor().find(selected_);
     if (!row || row->landing || !hrm_app::is_jump(row->opcode)) {
@@ -390,25 +471,30 @@ private:
     message_ = "LINK TARGET: Up/Down + Enter, or click a card. Esc cancels.";
     stack_->TakeFocus();
   }
+  /// Pause and attempt the next kernel instruction.
   void next() {
     playing_ = false;
     session().next();
   }
+  /// Pause and replay to the state preceding the last instruction attempt.
   void previous() {
     playing_ = false;
     session().previous();
   }
+  /// Pause and clear execution state while retaining the player's edited program.
   void reset() {
     playing_ = false;
     session().reset();
     message_ = "Reset: input, output, hand, floor, and counters are clear.";
   }
+  /// Toggle playback, restarting a terminal program before playing again.
   void toggle() {
     if (!playing_ && session().machine().state().status != hrm::ExecutionStatus::Running) {
       session().reset();
     }
     playing_ = !playing_ && session().machine().state().status == hrm::ExecutionStatus::Running;
   }
+  /// Normalize a valid integer operand, preserve invalid text for runtime checking, and reset.
   void apply_operand() {
     const auto *row = session().editor().find(selected_);
     if (row && !row->landing && hrm_app::uses_floor(row->opcode)) {
@@ -425,44 +511,70 @@ private:
     }
   }
 
+  /// Assemble the component tree and bind shared keyboard, mouse, and transport behavior.
   void build_components() {
     level_menu_ = Dropdown(&level_names_, &level_index_);
     stack_ = Make<CommandStack>();
     stack_->draw = [&](bool focused, std::vector<Box> &boxes) {
       return draw_stack(focused, boxes);
     };
-    stack_->move = [&](int delta) { move(delta); };
-    stack_->pick = [&](std::size_t index) { choose(session().editor().rows()[index].id); };
+    stack_->move = [&](int delta) {
+      move(delta);
+    };
+    stack_->pick = [&](std::size_t index) {
+      choose(session().editor().rows()[index].id);
+    };
     stack_->confirm = [&] {
       if (linking_) {
         choose(selected_);
       }
     };
-    stack_->remove = [&] { remove(); };
+    stack_->remove = [&] {
+      remove();
+    };
     Components first, second;
     for (std::size_t i = 0; i < 8; ++i) {
       const auto opcode = static_cast<hrm::Opcode>(i);
-      auto button = action(hrm_app::opcode_name(opcode), [&, opcode] { add(opcode); });
+      auto button = action(hrm_app::opcode_name(opcode), [&, opcode] {
+        add(opcode);
+      });
       palette_buttons_[i] = button;
       button = button | reflect(palette_boxes_[i]);
-      button =
-          Maybe(button, [&, i] { return session().machine().level().allowed_opcodes.test(i); });
+      button = Maybe(button, [&, i] {
+        return session().machine().level().allowed_opcodes.test(i);
+      });
       (i < 4 ? first : second).push_back(button);
     }
     palette_first_ = Container::Horizontal(std::move(first));
     palette_second_ = Container::Horizontal(std::move(second));
     auto input_options = InputOption::Default();
     input_options.multiline = false;
-    input_options.on_enter = [&] { apply_operand(); };
+    input_options.on_enter = [&] {
+      apply_operand();
+    };
     operand_input_ = Input(&operand_text_, "floor index", input_options);
-    apply_ = action("Set floor", [&] { apply_operand(); });
-    link_ = action("Link [T]", [&] { link(); });
-    erase_ = action("Delete", [&] { remove(); });
+    apply_ = action("Set floor", [&] {
+      apply_operand();
+    });
+    link_ = action("Link [T]", [&] {
+      link();
+    });
+    erase_ = action("Delete", [&] {
+      remove();
+    });
     edit_controls_ = Container::Horizontal({operand_input_, apply_, link_, erase_});
-    auto clear = action("Reset [R]", [&] { reset(); });
-    auto back = action("Previous", [&] { previous(); });
-    auto play = action(&play_label_, [&] { toggle(); });
-    auto forward = action("Next", [&] { next(); });
+    auto clear = action("Reset [R]", [&] {
+      reset();
+    });
+    auto back = action("Previous", [&] {
+      previous();
+    });
+    auto play = action(&play_label_, [&] {
+      toggle();
+    });
+    auto forward = action("Next", [&] {
+      next();
+    });
     SliderOption<int> slider_options;
     slider_options.value = &speed_;
     slider_options.min = 1;
@@ -473,8 +585,11 @@ private:
     speed_slider_ = Slider(slider_options);
     transport_ = Container::Horizontal({clear, back, play, forward, speed_slider_});
     auto hierarchy = Container::Vertical(
-        {level_menu_, palette_first_, palette_second_, stack_, edit_controls_, transport_});
-    root_ = Renderer(hierarchy, [&] { return draw(); });
+      {level_menu_, palette_first_, palette_second_, stack_, edit_controls_, transport_}
+    );
+    root_ = Renderer(hierarchy, [&] {
+      return draw();
+    });
     root_ = CatchEvent(root_, [&](Event event) {
       if (drag_ && event == Event::Escape) {
         drag_.reset();
@@ -493,7 +608,7 @@ private:
         return true;
       }
       if (event == Event::Escape ||
-          (!operand_input_->Focused() && event == Event::Character('q'))) {
+        (!operand_input_->Focused() && event == Event::Character('q'))) {
         if (quit) {
           quit();
         }
@@ -527,6 +642,11 @@ private:
     stack_->TakeFocus();
   }
 
+  /// Render command cards, jump routes, selection, and the current drop boundary.
+  ///
+  /// @param focused Whether the stack owns keyboard focus and should follow selection.
+  /// @param boxes Receives card bounds during layout for subsequent mouse hit tests.
+  /// @return A clipped, scrollable stack whose landing rows do not consume instruction IDs.
   Element draw_stack(bool focused, std::vector<Box> &boxes) {
     const auto &rows = session().editor().rows();
     boxes.resize(rows.size());
@@ -538,14 +658,15 @@ private:
       const auto &row = rows[i];
       const bool selected = selected_ == row.id;
       const bool current = !row.landing && active == row.id;
-      const bool target = std::any_of(rows.begin(), rows.end(),
-                                      [&](const auto &source) { return source.target == row.id; });
+      const bool target = std::any_of(rows.begin(), rows.end(), [&](const auto &source) {
+        return source.target == row.id;
+      });
       std::string label;
       if (row.landing) {
         label = target ? "  LANDING  ·  insert below" : "Drop commands here";
       } else {
         label = (current ? "▶ " : "  ") + std::to_string(++number) + "  " +
-                hrm_app::opcode_name(row.opcode);
+          hrm_app::opcode_name(row.opcode);
         if (hrm_app::is_jump(row.opcode)) {
           label += row.target ? "  → landing" : "  → ? [T]";
         } else if (hrm_app::uses_floor(row.opcode)) {
@@ -556,15 +677,14 @@ private:
       const bool append_zone = row.landing && !target;
       auto element = append_zone ? text(label) | color(selected ? blue : muted) | center
                                  : card(text(label) | color(row.landing ? muted : ink), edge);
-      const bool insert_here =
-          drag_ && drag_->moved && drag_->before &&
-          (*drag_->before == row.id || (*drag_->before == 0 && i + 1 == rows.size()));
+      const bool insert_here = drag_ && drag_->moved && drag_->before &&
+        (*drag_->before == row.id || (*drag_->before == 0 && i + 1 == rows.size()));
       if (insert_here) {
         auto line =
-            text("── ▼ INSERT " + std::string(hrm_app::opcode_name(drag_->opcode)) + " ──") |
-            color(teal) | bold;
+          text("── ▼ INSERT " + std::string(hrm_app::opcode_name(drag_->opcode)) + " ──") |
+          color(teal) | bold;
         auto marker =
-            !append_zone && *drag_->before == 0 ? vbox({filler(), line}) : vbox({line, filler()});
+          !append_zone && *drag_->before == 0 ? vbox({filler(), line}) : vbox({line, filler()});
         element = dbox({element, marker});
       }
       element = element | size(HEIGHT, EQUAL, 3) | reflect(boxes[i]);
@@ -573,8 +693,9 @@ private:
       }
       cards.push_back(element);
       if (!row.landing && hrm_app::is_jump(row.opcode) && row.target) {
-        const auto destination = std::find_if(
-            rows.begin(), rows.end(), [&](const auto &other) { return other.id == row.target; });
+        const auto destination = std::find_if(rows.begin(), rows.end(), [&](const auto &other) {
+          return other.id == row.target;
+        });
         if (destination != rows.end()) {
           const int from = static_cast<int>(i) * 12 + 6;
           const int to = static_cast<int>(destination - rows.begin()) * 12 + 6;
@@ -591,19 +712,25 @@ private:
       }
     }
     return hbox({canvas(std::move(arrows)), vbox(std::move(cards)) | flex}) | vscroll_indicator |
-           yframe | flex;
+      yframe | flex;
   }
 
+  /// Render a conveyor from the kernel's current state.
+  ///
+  /// @param output Select completed output instead of remaining input.
+  /// @return A fixed-width column of value cards, following the latest output when needed.
   Element conveyor(bool output) {
     const auto &state = session().machine().state();
     const auto &values = output ? state.output : session().machine().level().input;
     const auto begin = output ? std::size_t(0) : state.input_cursor;
     Elements blocks;
     for (std::size_t i = begin; i < values.size(); ++i) {
-      auto block =
-          card(text(std::to_string(values[i])) | color(ink) | center, output       ? blue
-                                                                      : i == begin ? teal
-                                                                                   : outline);
+      auto block = card(
+        text(std::to_string(values[i])) | color(ink) | center,
+        output         ? blue
+          : i == begin ? teal
+                       : outline
+      );
       if (output && i + 1 == values.size()) {
         block = block | focus;
       }
@@ -612,14 +739,17 @@ private:
     if (blocks.empty()) {
       blocks.push_back(text("empty") | color(muted) | center);
     }
-    return vbox({text(output ? "OUTBOX" : "INBOX") | bold | color(output ? blue : teal) | center,
-                 text(std::to_string(values.size() - begin) + (output ? " sent" : " remaining")) |
-                     color(muted) | center,
-                 text("▼  ▼  ▼") | color(outline) | center,
-                 vbox(std::move(blocks)) | yframe | flex}) |
-           size(WIDTH, EQUAL, 13);
+    return vbox(
+             {text(output ? "OUTBOX" : "INBOX") | bold | color(output ? blue : teal) | center,
+               text(std::to_string(values.size() - begin) + (output ? " sent" : " remaining")) |
+                 color(muted) | center,
+               text("▼  ▼  ▼") | color(outline) | center,
+               vbox(std::move(blocks)) | yframe | flex}
+           ) |
+      size(WIDTH, EQUAL, 13);
   }
 
+  /// Render the robot's hand and numbered floor cells from read-only machine state.
   Element room() {
     const auto &state = session().machine().state();
     Elements floor;
@@ -627,29 +757,48 @@ private:
       Elements line;
       for (std::size_t j = i; j < std::min(i + 3, state.floor.size()); ++j) {
         line.push_back(
-            vbox({card(text(state.floor[j].occupied ? std::to_string(state.floor[j].value) : "·") |
-                       color(ink) | center),
-                  text("[" + std::to_string(j) + "]") | color(muted) | center}) |
-            size(WIDTH, EQUAL, 10));
+          vbox(
+            {card(
+               text(state.floor[j].occupied ? std::to_string(state.floor[j].value) : "·") |
+               color(ink) | center
+             ),
+              text("[" + std::to_string(j) + "]") | color(muted) | center}
+          ) |
+          size(WIDTH, EQUAL, 10)
+        );
       }
       floor.push_back(hbox(std::move(line)) | center);
     }
     if (floor.empty()) {
       floor.push_back(text("No floor slots") | color(muted) | center);
     }
-    return vbox({text("ROBOT") | color(muted) | center,
-                 card(text(state.hand.occupied ? std::to_string(state.hand.value) : "empty hand") |
-                          color(amber) | center,
-                      amber) |
-                     hcenter,
-                 text("  ▄▄▄▄▄  ") | color(teal) | center, text(" ▐ ● ● ▌ ") | color(teal) | center,
-                 text("  ▀┬─┬▀  ") | color(teal) | center, text("  ╱│ │╲  ") | color(teal) | center,
-                 text("   ╱ ╲   ") | color(teal) | center, filler(),
-                 text("FLOOR") | color(muted) | center, vbox(std::move(floor)) | yframe | flex,
-                 filler()}) |
-           flex;
+    return vbox(
+             {text("ROBOT") | color(muted) | center,
+               card(
+                 text(state.hand.occupied ? std::to_string(state.hand.value) : "empty hand") |
+                   color(amber) | center,
+                 amber
+               ) |
+                 hcenter,
+               text("  ▄▄▄▄▄  ") | color(teal) | center,
+               text(" ▐ ● ● ▌ ") | color(teal) | center,
+               text("  ▀┬─┬▀  ") | color(teal) | center,
+               text("  ╱│ │╲  ") | color(teal) | center,
+               text("   ╱ ╲   ") | color(teal) | center,
+               filler(),
+               text("FLOOR") | color(muted) | center,
+               vbox(std::move(floor)) | yframe | flex,
+               filler()}
+           ) |
+      flex;
   }
 
+  /// Overlay a dragged card at its original grab offset without changing underlying layout.
+  ///
+  /// @param view Root workroom view to preserve underneath the overlay.
+  /// @param width Current terminal width in cells.
+  /// @param height Current terminal height in cells.
+  /// @return The original view or a bounded floating-card overlay during an active drag.
   Element with_drag_preview(Element view, int width, int height) {
     if (!drag_ || !drag_->moved) {
       return view;
@@ -658,12 +807,16 @@ private:
     const int x = std::clamp(drag_->x - drag_->grab_x, 0, width - card_width);
     const int y = std::clamp(drag_->y - drag_->grab_y, 0, height - 3);
     auto preview = card(text(drag_->label) | color(ink) | bold, drag_->before ? teal : amber) |
-                   size(WIDTH, EQUAL, card_width) | size(HEIGHT, EQUAL, 3) | clear_under;
-    auto overlay = vbox({filler() | size(HEIGHT, EQUAL, y),
-                         hbox({filler() | size(WIDTH, EQUAL, x), preview, filler()}), filler()});
+      size(WIDTH, EQUAL, card_width) | size(HEIGHT, EQUAL, 3) | clear_under;
+    auto overlay = vbox(
+      {filler() | size(HEIGHT, EQUAL, y),
+        hbox({filler() | size(WIDTH, EQUAL, x), preview, filler()}),
+        filler()}
+    );
     return dbox({view, overlay});
   }
 
+  /// Render the responsive workroom and command panel, synchronizing level selection first.
   Element draw() {
     if (shown_level_ != level_index_) {
       shown_level_ = level_index_;
@@ -679,11 +832,13 @@ private:
     const int height = preview_height_ ? preview_height_ : dimensions.dimy;
     if (width < 112 || height < 32) {
       drag_.reset();
-      return vbox({text("HUMAN RESOURCE MACHINE") | bold | color(teal),
-                   text("Resize the terminal to at least 112 columns × 32 rows."),
-                   text("Current: " + std::to_string(width) + " × " + std::to_string(height)),
-                   text("Q / Esc to quit") | color(muted)}) |
-             center | bgcolor(background);
+      return vbox(
+               {text("HUMAN RESOURCE MACHINE") | bold | color(teal),
+                 text("Resize the terminal to at least 112 columns × 32 rows."),
+                 text("Current: " + std::to_string(width) + " × " + std::to_string(height)),
+                 text("Q / Esc to quit") | color(muted)}
+             ) |
+        center | bgcolor(background);
     }
     const auto &level = config_.levels[static_cast<std::size_t>(level_index_)];
     const auto &state = session().machine().state();
@@ -699,60 +854,101 @@ private:
     }
     if (state.verdict == hrm::Verdict::Error) {
       status = "ERROR #" + std::to_string(state.diagnostic.instruction) + " · " +
-               error_text(state.diagnostic.code);
+        error_text(state.diagnostic.code);
       status_color = red;
     }
     if (session().machine().program().instructions.empty()) {
       status = "READY · add commands from the palette";
       status_color = teal;
     }
-    auto board =
-        vbox({hbox({text(" WORKROOM ") | bold | color(teal), filler(),
-                    text("steps " + std::to_string(state.completed) + " ") | color(muted)}),
-              separator() | color(outline),
-              hbox({conveyor(false), separator() | color(outline), room(),
-                    separator() | color(outline), conveyor(true)}) |
-                  flex}) |
-        flex;
-    auto description =
-        card(vbox({text(level.title) | bold | color(teal),
-                   paragraph(level.definition.description) | color(ink),
-                   paragraph("Goal: " + sequence(level.definition.target)) | color(amber)})) |
-        size(HEIGHT, EQUAL, 8);
-    auto buttons = hbox({transport_->ChildAt(0)->Render(), transport_->ChildAt(1)->Render(),
-                         transport_->ChildAt(2)->Render(), transport_->ChildAt(3)->Render()});
-    auto speed = hbox({text("  Speed ") | vcenter,
-                       speed_slider_->Render() | vcenter | size(WIDTH, EQUAL, 22), filler()});
+    auto board = vbox(
+                   {hbox(
+                      {text(" WORKROOM ") | bold | color(teal),
+                        filler(),
+                        text("steps " + std::to_string(state.completed) + " ") | color(muted)}
+                    ),
+                     separator() | color(outline),
+                     hbox(
+                       {conveyor(false),
+                         separator() | color(outline),
+                         room(),
+                         separator() | color(outline),
+                         conveyor(true)}
+                     ) |
+                       flex}
+                 ) |
+      flex;
+    auto description = card(vbox(
+                         {text(level.title) | bold | color(teal),
+                           paragraph(level.definition.description) | color(ink),
+                           paragraph("Goal: " + sequence(level.definition.target)) | color(amber)}
+                       )) |
+      size(HEIGHT, EQUAL, 8);
+    auto buttons = hbox(
+      {transport_->ChildAt(0)->Render(),
+        transport_->ChildAt(1)->Render(),
+        transport_->ChildAt(2)->Render(),
+        transport_->ChildAt(3)->Render()}
+    );
+    auto speed = hbox(
+      {text("  Speed ") | vcenter,
+        speed_slider_->Render() | vcenter | size(WIDTH, EQUAL, 22),
+        filler()}
+    );
     const int workroom_width = width - 53;
     auto playback =
-        workroom_width >= 80 ? hbox({buttons, speed | vcenter}) : vbox({buttons, speed});
-    auto workroom =
-        vbox({board | flex, separator() | color(outline),
-              hbox({text(" " + status) | color(status_color) | bold, filler(),
-                    text(std::to_string(speed_) + " steps/s ") | color(muted)}),
-              playback, text(" Space play/pause · ←/→ step · R reset") | color(muted)}) |
-        size(WIDTH, EQUAL, workroom_width);
+      workroom_width >= 80 ? hbox({buttons, speed | vcenter}) : vbox({buttons, speed});
+    auto workroom = vbox(
+                      {board | flex,
+                        separator() | color(outline),
+                        hbox(
+                          {text(" " + status) | color(status_color) | bold,
+                            filler(),
+                            text(std::to_string(speed_) + " steps/s ") | color(muted)}
+                        ),
+                        playback,
+                        text(" Space play/pause · ←/→ step · R reset") | color(muted)}
+                    ) |
+      size(WIDTH, EQUAL, workroom_width);
     auto commands =
-        vbox({description,
-              hbox({text(" COMMANDS ") | bold | color(blue), filler(),
-                    text(drag_ && drag_->moved && drag_->before
-                             ? "INSERT " + std::string(hrm_app::opcode_name(drag_->opcode))
-                         : drag_    ? "DRAGGING"
-                         : linking_ ? "PICK TARGET"
-                                    : "drag to insert") |
-                        color(linking_ ? amber : muted)}),
-              palette_first_->Render(), palette_second_->Render(), stack_->Render() | flex,
-              hbox({text("Floor ") | color(muted) | vcenter,
-                    card(operand_input_->Render() | color(ink), blue) | size(WIDTH, EQUAL, 7),
-                    apply_->Render(), link_->Render(), erase_->Render()}),
-              paragraph(" " + message_) | color(linking_ ? amber : muted),
-              text(" ↑/↓ select · T link · Del remove · Tab · Q quit") | color(muted)}) |
-        size(WIDTH, EQUAL, 52);
-    auto view = vbox({hbox({text("  " + config_.title) | bold | color(ink), filler(),
-                            level_menu_->Render() | size(WIDTH, EQUAL, 32)}),
-                      separator() | color(outline),
-                      hbox({workroom, separator() | color(outline), commands}) | flex}) |
-                color(ink) | bgcolor(background);
+      vbox(
+        {description,
+          hbox(
+            {text(" COMMANDS ") | bold | color(blue),
+              filler(),
+              text(
+                drag_ && drag_->moved && drag_->before
+                  ? "INSERT " + std::string(hrm_app::opcode_name(drag_->opcode))
+                  : drag_    ? "DRAGGING"
+                  : linking_ ? "PICK TARGET"
+                             : "drag to insert"
+              ) |
+                color(linking_ ? amber : muted)}
+          ),
+          palette_first_->Render(),
+          palette_second_->Render(),
+          stack_->Render() | flex,
+          hbox(
+            {text("Floor ") | color(muted) | vcenter,
+              card(operand_input_->Render() | color(ink), blue) | size(WIDTH, EQUAL, 7),
+              apply_->Render(),
+              link_->Render(),
+              erase_->Render()}
+          ),
+          paragraph(" " + message_) | color(linking_ ? amber : muted),
+          text(" ↑/↓ select · T link · Del remove · Tab · Q quit") | color(muted)}
+      ) |
+      size(WIDTH, EQUAL, 52);
+    auto view = vbox(
+                  {hbox(
+                     {text("  " + config_.title) | bold | color(ink),
+                       filler(),
+                       level_menu_->Render() | size(WIDTH, EQUAL, 32)}
+                   ),
+                    separator() | color(outline),
+                    hbox({workroom, separator() | color(outline), commands}) | flex}
+                ) |
+      color(ink) | bgcolor(background);
     return with_drag_preview(view, width, height);
   }
 
@@ -764,17 +960,21 @@ private:
   bool playing_ = false, redraw_ = false;
   std::string operand_text_ = "0", play_label_ = "Play [Space]";
   std::string message_ =
-      "Build a program with the palette. Click a card to select its insertion point.";
+    "Build a program with the palette. Click a card to select its insertion point.";
   std::chrono::steady_clock::time_point next_tick_{};
   std::chrono::steady_clock::time_point next_scroll_{};
   std::optional<DragState> drag_;
   std::array<Box, 8> palette_boxes_;
   std::array<Component, 8> palette_buttons_;
   Component root_, level_menu_, palette_first_, palette_second_, operand_input_, apply_, link_,
-      erase_, edit_controls_, transport_, speed_slider_;
+    erase_, edit_controls_, transport_, speed_slider_;
   std::shared_ptr<CommandStack> stack_;
 };
 
+/// Locate the default YAML configuration using working-directory precedence.
+///
+/// @param executable Process executable path used if the host cannot resolve its own binary.
+/// @return The local assets path or an assets path beside the executable for the loader to check.
 std::filesystem::path default_config(const char *executable) {
   if (std::filesystem::exists("assets/game.yaml")) {
     return "assets/game.yaml";
@@ -789,6 +989,11 @@ std::filesystem::path default_config(const char *executable) {
 
 } // namespace
 
+/// Parse frontend options and run the interactive workroom or a single preview frame.
+///
+/// @param argc Number of process arguments.
+/// @param argv Executable path and optional configuration, level, or preview options.
+/// @return Zero after normal exit/help, or one after a configuration or argument failure.
 int main(int argc, char **argv) {
   try {
     auto config = default_config(argv[0]);
@@ -828,8 +1033,9 @@ int main(int argc, char **argv) {
       }
     }
     auto game = hrm_app::load_config(config);
-    if (std::none_of(game.levels.begin(), game.levels.end(),
-                     [&](const auto &item) { return item.definition.id == level; })) {
+    if (std::none_of(game.levels.begin(), game.levels.end(), [&](const auto &item) {
+          return item.definition.id == level;
+        })) {
       throw std::runtime_error("level not found in configuration: " + std::to_string(level));
     }
     Application application(std::move(game), level);

@@ -16,9 +16,7 @@ FLAGS = ["-std=c++11", "-pedantic-errors", "-Wall", "-Wextra", "-Werror"]
 AMALGAMATE = runpy.run_path(str(ROOT / "tools/pack-oj.py"))["amalgamate"]
 
 
-def run(
-    command: list[str], input_text: str | None = None
-) -> subprocess.CompletedProcess[str]:
+def run(command: list[str], input_text: str | None = None) -> subprocess.CompletedProcess[str]:
     """Execute a command with captured output and a bounded runtime."""
     return subprocess.run(
         command, input=input_text, text=True, capture_output=True, timeout=120, cwd=ROOT
@@ -33,15 +31,8 @@ class KernelTests(unittest.TestCase):
         """Compile the regression executable and both forms of the OJ program."""
         BUILD.mkdir(parents=True, exist_ok=True)
         sources = [str(path) for path in sorted((ROOT / "src/core").glob("*.cpp"))]
-        for name, main in (
-            ("core-tests", "tests/core.cpp"),
-            ("hrm-oj", "src/oj/main.cpp"),
-        ):
-            result = run(
-                COMPILER
-                + FLAGS
-                + ["-Iinclude", *sources, main, "-o", str(BUILD / name)]
-            )
+        for name, main in (("core-tests", "tests/core.cpp"), ("hrm-oj", "src/oj/main.cpp")):
+            result = run(COMPILER + FLAGS + ["-Iinclude", *sources, main, "-o", str(BUILD / name)])
             if result.returncode:
                 raise RuntimeError(result.stderr)
         packed = BUILD / "submission.cpp"
@@ -82,11 +73,7 @@ class KernelTests(unittest.TestCase):
             (1, [], "Fail"),
             (1, ["outbox"], "Error on instruction 1"),
             (1, ["jump 1"], "Error on instruction 1"),
-            (
-                1,
-                ["inbox", "outbox", "inbox", "outbox", "outbox"],
-                "Error on instruction 5",
-            ),
+            (1, ["inbox", "outbox", "inbox", "outbox", "outbox"], "Error on instruction 5"),
             (1, ["inbox", "outbox", "inbox", "outbox", "inbox", "bad"], "Success"),
             (2, ["jump 3", "", "inbox"], "Fail"),
             (2, ["jump 2", ""], "Error on instruction 2"),
@@ -132,31 +119,20 @@ class KernelTests(unittest.TestCase):
             ),
         ]
         for level, lines, expected in cases:
-            payload = f"{level}\n{len(lines)}\n" + "".join(
-                line + "\n" for line in lines
-            )
+            payload = f"{level}\n{len(lines)}\n" + "".join((line + "\n" for line in lines))
             for newline in ("\n", "\r\n"):
                 for binary in ("hrm-oj", "hrm-oj-single"):
                     with self.subTest(
                         level=level, lines=lines, binary=binary, newline=repr(newline)
                     ):
-                        result = run(
-                            [str(BUILD / binary)], payload.replace("\n", newline)
-                        )
+                        result = run([str(BUILD / binary)], payload.replace("\n", newline))
                         self.assertEqual(result.returncode, 0, result.stderr)
                         self.assertEqual(result.stdout, expected + "\n")
                         self.assertEqual(result.stderr, "")
 
     def test_bad_envelope(self) -> None:
         """Keep envelope errors separate from instruction verdicts."""
-        for payload in (
-            "",
-            "4\n0\n",
-            "1\n-1\n",
-            "1\n2\ninbox\n",
-            "1\n1x\n",
-            "1\n0 extra\n",
-        ):
+        for payload in ("", "4\n0\n", "1\n-1\n", "1\n2\ninbox\n", "1\n1x\n", "1\n0 extra\n"):
             for binary in ("hrm-oj", "hrm-oj-single"):
                 with self.subTest(payload=payload, binary=binary):
                     result = run([str(BUILD / binary)], payload)
@@ -179,17 +155,11 @@ class KernelTests(unittest.TestCase):
             root = Path(temporary)
             headers = root / "include/hrm"
             headers.mkdir(parents=True)
-            (headers / "core.hpp").write_text(
-                '#include "hrm/loop.hpp"\n', encoding="utf-8"
-            )
-            (headers / "loop.hpp").write_text(
-                '#include "hrm/core.hpp"\n', encoding="utf-8"
-            )
+            (headers / "core.hpp").write_text('#include "hrm/loop.hpp"\n', encoding="utf-8")
+            (headers / "loop.hpp").write_text('#include "hrm/core.hpp"\n', encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "Include cycle"):
                 AMALGAMATE(root)
-            (headers / "core.hpp").write_text(
-                '#include "../outside.hpp"\n', encoding="utf-8"
-            )
+            (headers / "core.hpp").write_text('#include "../outside.hpp"\n', encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "Unsupported local include"):
                 AMALGAMATE(root)
 

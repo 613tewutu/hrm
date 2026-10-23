@@ -32,6 +32,7 @@
               tmux
               python3
               clang-tools
+              ruff
               ripgrep
               git
               cacert

@@ -51,8 +51,8 @@ DecodeResult decode_line(const std::string &line) {
   std::istringstream tokens(line);
   std::string name;
   tokens >> name;
-  const char *names[] = {"inbox",  "outbox",   "add",  "sub",
-                         "copyto", "copyfrom", "jump", "jumpifzero"};
+  const char *names[] =
+    {"inbox", "outbox", "add", "sub", "copyto", "copyfrom", "jump", "jumpifzero"};
   std::size_t index = 0;
   while (index < 8 && name != names[index]) {
     ++index;

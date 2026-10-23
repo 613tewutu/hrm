@@ -30,13 +30,27 @@ struct StepResult {
 
 class Machine {
 public:
+  /// Own a level and program and initialize a deterministic execution session.
+  ///
+  /// @param level Input, expected output, floor size, and allowed instructions.
+  /// @param program Original instruction slots; malformed lines remain deferred until reached.
   Machine(LevelDefinition level, Program program);
 
-  // Execute at most one instruction; terminal calls leave all state unchanged.
+  /// Attempt the current instruction and atomically apply its effects when valid.
+  ///
+  /// Syntax and runtime errors are checked only for the reached instruction.
+  /// Errors preserve the data state and program counter while recording the attempt.
+  /// An empty inbox or falling off the program ends execution and evaluates output.
+  ///
+  /// @return The attempted instruction ID and transition; terminal calls return AlreadyStopped.
   StepResult step();
+  /// Return the current read-only machine state.
   const MachineState &state() const;
+  /// Return the owned level definition.
   const LevelDefinition &level() const;
+  /// Return the owned original program.
   const Program &program() const;
+  /// Restart the same program with empty hand, floor, output, counters, and decode cache.
   void reset();
 
 private:
@@ -45,7 +59,13 @@ private:
     DecodeResult result;
   };
 
+  /// Halt normally and compare the complete output against the target.
   void halt(HaltReason reason);
+  /// Record a reached instruction error without changing its program counter or data.
+  ///
+  /// @param result Attempt metadata created before the failing instruction executes.
+  /// @param code The syntax or runtime failure to attach to the terminal state.
+  /// @return The same step metadata marked Faulted with the original instruction ID.
   StepResult fault(StepResult result, ErrorCode code);
 
   LevelDefinition level_;

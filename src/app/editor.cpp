@@ -9,8 +9,8 @@
 namespace hrm_app {
 
 const char *opcode_name(hrm::Opcode opcode) {
-  const char *names[] = {"inbox",  "outbox",   "add",  "sub",
-                         "copyto", "copyfrom", "jump", "jumpifzero"};
+  const char *names[] =
+    {"inbox", "outbox", "add", "sub", "copyto", "copyfrom", "jump", "jumpifzero"};
   return names[static_cast<std::size_t>(opcode)];
 }
 
@@ -20,7 +20,7 @@ bool is_jump(hrm::Opcode opcode) {
 
 bool uses_floor(hrm::Opcode opcode) {
   return opcode == hrm::Opcode::Add || opcode == hrm::Opcode::Sub ||
-         opcode == hrm::Opcode::CopyTo || opcode == hrm::Opcode::CopyFrom;
+    opcode == hrm::Opcode::CopyTo || opcode == hrm::Opcode::CopyFrom;
 }
 
 Editor::Editor(const std::vector<std::string> &source) {
@@ -45,26 +45,30 @@ Editor::Editor(const std::vector<std::string> &source) {
   rows_.push_back(last);
   for (std::size_t i = 0; i < original.size(); ++i) {
     if (is_jump(find(original[i])->opcode) && targets[i] >= 1 &&
-        static_cast<std::uintmax_t>(targets[i]) <= original.size()) {
+      static_cast<std::uintmax_t>(targets[i]) <= original.size()) {
       set_target(original[i], original[static_cast<std::size_t>(targets[i] - 1)]);
     }
   }
 }
 
-const std::vector<CommandRow> &Editor::rows() const { return rows_; }
+const std::vector<CommandRow> &Editor::rows() const {
+  return rows_;
+}
 
 const CommandRow *Editor::find(RowId id) const {
-  const auto it =
-      std::find_if(rows_.begin(), rows_.end(), [id](const auto &row) { return row.id == id; });
+  const auto it = std::find_if(rows_.begin(), rows_.end(), [id](const auto &row) {
+    return row.id == id;
+  });
   return it == rows_.end() ? nullptr : &*it;
 }
 
 RowId Editor::insert_command(RowId after, hrm::Opcode opcode, std::string operand) {
-  const auto position = std::find_if(rows_.begin(), rows_.end(),
-                                     [after](const auto &row) { return row.id == after; });
+  const auto position = std::find_if(rows_.begin(), rows_.end(), [after](const auto &row) {
+    return row.id == after;
+  });
   const auto index = position == rows_.end()
-                         ? rows_.size() - 1
-                         : static_cast<std::size_t>(position - rows_.begin()) + 1;
+    ? rows_.size() - 1
+    : static_cast<std::size_t>(position - rows_.begin()) + 1;
   return insert_at(index, opcode, std::move(operand));
 }
 
@@ -72,8 +76,9 @@ RowId Editor::insert_before(RowId before, hrm::Opcode opcode, std::string operan
   if (before == 0) {
     return insert_command(rows_.back().id, opcode, std::move(operand));
   }
-  const auto position = std::find_if(rows_.begin(), rows_.end(),
-                                     [before](const auto &row) { return row.id == before; });
+  const auto position = std::find_if(rows_.begin(), rows_.end(), [before](const auto &row) {
+    return row.id == before;
+  });
   if (position == rows_.end()) {
     return 0;
   }
@@ -93,18 +98,20 @@ RowId Editor::insert_at(std::size_t index, hrm::Opcode opcode, std::string opera
 }
 
 bool Editor::move_before(RowId source, RowId before) {
-  const auto original = std::find_if(rows_.begin(), rows_.end(),
-                                     [source](const auto &row) { return row.id == source; });
+  const auto original = std::find_if(rows_.begin(), rows_.end(), [source](const auto &row) {
+    return row.id == source;
+  });
   if (original == rows_.end() || original->landing || source == before) {
     return false;
   }
   const bool terminal_linked = std::any_of(rows_.begin(), rows_.end(), [&](const auto &row) {
     return !row.landing && is_jump(row.opcode) && row.target == rows_.back().id;
   });
-  const auto destination =
-      before == 0 ? (terminal_linked ? rows_.end() : rows_.end() - 1)
-                  : std::find_if(rows_.begin(), rows_.end(),
-                                 [before](const auto &row) { return row.id == before; });
+  const auto destination = before == 0
+    ? (terminal_linked ? rows_.end() : rows_.end() - 1)
+    : std::find_if(rows_.begin(), rows_.end(), [before](const auto &row) {
+        return row.id == before;
+      });
   if (before != 0 && destination == rows_.end()) {
     return false;
   }
@@ -136,16 +143,22 @@ void Editor::tidy_landings() {
       referenced.insert(row.target);
     }
   }
-  rows_.erase(std::remove_if(rows_.begin(), rows_.end(),
-                             [&](const auto &row) {
-                               return row.landing && row.id != last && !referenced.count(row.id);
-                             }),
-              rows_.end());
+  rows_.erase(
+    std::remove_if(
+      rows_.begin(),
+      rows_.end(),
+      [&](const auto &row) {
+        return row.landing && row.id != last && !referenced.count(row.id);
+      }
+    ),
+    rows_.end()
+  );
 }
 
 RowId Editor::insert_landing(RowId before) {
-  auto position = std::find_if(rows_.begin(), rows_.end(),
-                               [before](const auto &row) { return row.id == before; });
+  auto position = std::find_if(rows_.begin(), rows_.end(), [before](const auto &row) {
+    return row.id == before;
+  });
   if (position != rows_.end() && position->landing) {
     return position->id;
   }
@@ -160,8 +173,9 @@ RowId Editor::insert_landing(RowId before) {
 }
 
 void Editor::erase(RowId id) {
-  const auto position =
-      std::find_if(rows_.begin(), rows_.end(), [id](const auto &row) { return row.id == id; });
+  const auto position = std::find_if(rows_.begin(), rows_.end(), [id](const auto &row) {
+    return row.id == id;
+  });
   if (position == rows_.end() || (position + 1 == rows_.end() && position->landing)) {
     return;
   }
@@ -224,7 +238,7 @@ CompiledProgram Editor::compile() const {
     if (is_jump(row.opcode)) {
       const auto destination = destinations.find(row.target);
       instruction.text +=
-          " " + std::to_string(destination == destinations.end() ? 0 : destination->second);
+        " " + std::to_string(destination == destinations.end() ? 0 : destination->second);
     } else if (uses_floor(row.opcode)) {
       instruction.text += " " + row.operand;
     }
@@ -235,20 +249,29 @@ CompiledProgram Editor::compile() const {
 }
 
 Session::Session(hrm::LevelDefinition level, Editor editor)
-    : level_(std::move(level)), editor_(std::move(editor)) {
+  : level_(std::move(level)),
+    editor_(std::move(editor)) {
   reset();
 }
 
-const hrm::Machine &Session::machine() const { return *machine_; }
-const Editor &Session::editor() const { return editor_; }
-Editor &Session::edit() { return editor_; }
+const hrm::Machine &Session::machine() const {
+  return *machine_;
+}
+const Editor &Session::editor() const {
+  return editor_;
+}
+Editor &Session::edit() {
+  return editor_;
+}
 
 void Session::reset() {
   compiled_ = editor_.compile();
   machine_ = std::make_unique<hrm::Machine>(level_, compiled_.program);
 }
 
-void Session::next() { machine_->step(); }
+void Session::next() {
+  machine_->step();
+}
 
 void Session::previous() {
   const auto attempted = machine_->state().attempted;
@@ -266,9 +289,8 @@ RowId Session::current_row() const {
   if (compiled_.instruction_rows.empty()) {
     return 0;
   }
-  const auto index = state.pc < compiled_.instruction_rows.size()
-                         ? state.pc
-                         : compiled_.instruction_rows.size() - 1;
+  const auto index =
+    state.pc < compiled_.instruction_rows.size() ? state.pc : compiled_.instruction_rows.size() - 1;
   return compiled_.instruction_rows[index];
 }
 
