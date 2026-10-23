@@ -1,0 +1,80 @@
+#include "hrm_app/level_config.hpp"
+
+#include "hrm/program.hpp"
+
+#include <set>
+#include <stdexcept>
+#include <utility>
+#include <yaml-cpp/yaml.h>
+
+namespace hrm_app {
+namespace {
+
+void require(bool condition, const std::string &message) {
+  if (!condition) {
+    throw std::runtime_error(message);
+  }
+}
+
+std::vector<hrm::Value> values(const YAML::Node &node, const std::string &field) {
+  require(node.IsSequence(), field + " must be a sequence of integers");
+  std::vector<hrm::Value> result;
+  for (const auto &item : node) {
+    require(item.IsScalar(), field + " must contain integers");
+    const auto parsed = hrm::parse_integer(item.Scalar());
+    require(parsed.error == hrm::ErrorCode::None, field + " contains an invalid 64-bit integer");
+    result.push_back(parsed.value);
+  }
+  return result;
+}
+
+} // namespace
+
+GameConfig load_config(const std::filesystem::path &path) {
+  try {
+    const auto root = YAML::LoadFile(path.string());
+    require(root.IsMap(), "game configuration must be a map");
+    require(root["version"].as<int>() == 1, "unsupported configuration version");
+    GameConfig config;
+    config.title = root["title"].as<std::string>();
+    const auto levels = root["levels"];
+    require(levels.IsSequence() && levels.size() > 0, "levels must be a nonempty sequence");
+    std::set<int> ids;
+    for (const auto &node : levels) {
+      require(node.IsMap(), "each level must be a map");
+      GameLevel level;
+      auto &definition = level.definition;
+      definition.id = node["id"].as<int>();
+      require(definition.id > 0 && ids.insert(definition.id).second,
+              "level IDs must be unique and positive");
+      level.title = node["title"].as<std::string>();
+      definition.description = node["description"].as<std::string>();
+      definition.input = values(node["input"], "input");
+      definition.target = values(node["target"], "target");
+      const auto floor = hrm::parse_integer(node["floor_size"].as<std::string>());
+      require(floor.error == hrm::ErrorCode::None && floor.value >= 0 && floor.value <= 1024,
+              "floor_size must be between 0 and 1024");
+      definition.floor_size = static_cast<std::size_t>(floor.value);
+      const auto instructions = node["instructions"];
+      require(instructions.IsSequence() && instructions.size() > 0,
+              "instructions must be a nonempty sequence");
+      for (const auto &item : instructions) {
+        const auto name = item.as<std::string>();
+        auto decoded = hrm::decode_line(name);
+        if (decoded.error == hrm::ErrorCode::WrongOperandCount) {
+          decoded = hrm::decode_line(name + " 0");
+        }
+        require(decoded.error == hrm::ErrorCode::None &&
+                    name.find_first_of(" \t\r\n") == std::string::npos,
+                "unknown instruction: " + name);
+        definition.allowed_opcodes.set(static_cast<std::size_t>(decoded.instruction.opcode));
+      }
+      config.levels.push_back(std::move(level));
+    }
+    return config;
+  } catch (const std::exception &error) {
+    throw std::runtime_error(path.string() + ": " + error.what());
+  }
+}
+
+} // namespace hrm_app

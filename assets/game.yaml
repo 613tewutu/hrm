@@ -1,0 +1,32 @@
+version: 1
+title: Human Resource Machine
+levels:
+  - id: 1
+    title: First day
+    description: >-
+      Move every block from INBOX to OUTBOX, keeping the original order.
+      Add commands from the palette. Select a card to insert after it.
+    input: [1, 2]
+    target: [1, 2]
+    floor_size: 0
+    instructions: [inbox, outbox]
+
+  - id: 2
+    title: Two sides
+    description: >-
+      For each pair, output first minus second, then second minus first.
+      Jump arrows land on empty cards; insert a command below a landing card.
+    input: [3, 9, 5, 1, -2, -2, 9, -9]
+    target: [-6, 6, 4, -4, 0, 0, 18, -18]
+    floor_size: 3
+    instructions: [inbox, outbox, copyfrom, copyto, add, sub, jump, jumpifzero]
+
+  - id: 3
+    title: Equal partners
+    description: >-
+      Take two blocks at a time. Output one of them only when they are equal;
+      otherwise discard both. Repeat until the input belt is empty.
+    input: [6, 2, 7, 7, -9, 3, -3, -3]
+    target: [7, -3]
+    floor_size: 3
+    instructions: [inbox, outbox, copyfrom, copyto, add, sub, jump, jumpifzero]
