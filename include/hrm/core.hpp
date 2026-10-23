@@ -1,5 +1,6 @@
 #pragma once
 
-namespace hrm {
-// Shared engine declarations will live here.
-}
+#include "hrm/level.hpp"
+#include "hrm/machine.hpp"
+#include "hrm/program.hpp"
+#include "hrm/types.hpp"
