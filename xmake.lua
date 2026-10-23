@@ -1,7 +1,6 @@
 set_xmakever("3.0.0")
 set_project("hrm")
 set_version("0.1.0")
-set_languages("c++20")
 set_warnings("all", "extra")
 
 add_rules("mode.debug", "mode.release")
@@ -28,14 +27,23 @@ end
 
 target("hrm-core")
     set_kind("static")
+    set_languages("c++11")
     add_files("src/core/*.cpp")
     add_headerfiles("include/(hrm/*.hpp)")
     add_includedirs("include", {public = true})
 target_end()
 
+target("hrm-oj")
+    set_kind("binary")
+    set_languages("c++11")
+    add_files("src/oj/main.cpp")
+    add_deps("hrm-core")
+target_end()
+
 if has_config("tui") then
     target("hrm-tui")
         set_kind("binary")
+        set_languages("c++20")
         add_files("src/tui/*.cpp")
         add_deps("hrm-core")
         add_packages("ftxui", {components = {"component"}})
@@ -45,6 +53,7 @@ end
 if has_config("gui") then
     target("hrm-gui")
         set_kind("binary")
+        set_languages("c++20")
         add_files("src/gui/*.cpp")
         add_deps("hrm-core")
         add_packages("raylib")

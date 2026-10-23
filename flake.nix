@@ -29,6 +29,7 @@
               ninja
               pkg-config
               just
+              python3
               clang-tools
               ripgrep
               git
