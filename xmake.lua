@@ -21,6 +21,10 @@ if has_config("tui") then
     add_requires("ftxui 6.1.9")
 end
 
+if has_config("tui") or has_config("gui") then
+    add_requires("yaml-cpp 0.8.0")
+end
+
 if has_config("gui") then
     add_requires("raylib 6.0")
 end
@@ -40,13 +44,37 @@ target("hrm-oj")
     add_deps("hrm-core")
 target_end()
 
+if has_config("tui") or has_config("gui") then
+    target("hrm-app")
+        set_kind("static")
+        set_languages("c++20")
+        add_files("src/app/*.cpp")
+        add_headerfiles("include/(hrm_app/*.hpp)")
+        add_includedirs("include", {public = true})
+        add_deps("hrm-core")
+        add_packages("yaml-cpp")
+    target_end()
+
+    target("hrm-app-tests")
+        set_kind("binary")
+        set_default(false)
+        set_languages("c++20")
+        add_files("tests/app.cpp")
+        add_deps("hrm-app")
+    target_end()
+end
+
 if has_config("tui") then
     target("hrm-tui")
         set_kind("binary")
         set_languages("c++20")
         add_files("src/tui/*.cpp")
-        add_deps("hrm-core")
+        add_deps("hrm-app")
         add_packages("ftxui", {components = {"component"}})
+        after_build(function (target)
+            os.mkdir(path.join(target:targetdir(), "assets"))
+            os.cp("assets/game.yaml", path.join(target:targetdir(), "assets/game.yaml"))
+        end)
     target_end()
 end
 
