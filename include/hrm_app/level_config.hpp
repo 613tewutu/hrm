@@ -25,4 +25,9 @@ struct GameConfig {
 /// @throws std::runtime_error If reading, YAML conversion, or schema validation fails.
 GameConfig load_config(const std::filesystem::path &path);
 
+/// Load validated default levels embedded from assets/game.yaml during the build.
+/// @return The bundled game configuration without accessing external resource files.
+/// @throws std::runtime_error If embedded configuration validation fails.
+GameConfig load_bundled_config();
+
 } // namespace hrm_app

@@ -184,13 +184,17 @@ timing runs on the UI thread with no background mutations of the kernel.
 
 ## YAML configuration
 
-`assets/game.yaml` contains the three assignment levels, **Triple it** (level 4),
-and **Same sign** (level 5).
+`assets/game.yaml` contains ten levels: the three assignment levels, **Triple it**,
+**Same sign**, **Absolute delivery**, **Larger partner**, **Running total**,
+**Batch totals**, and **Product line**.
 Every level opens with an empty command editor. The first three levels are
 tested against the OJ built-in data; additional game levels live in YAML.
-The build copies the configuration beside the executable under `assets/`, so
-the TUI can also start outside the repository. A working-directory
-`assets/game.yaml` takes precedence; `--config PATH` selects a file explicitly.
+Xmake embeds this YAML into the application library with `utils.bin2c`.
+Default startup reads this embedded document and does not search the working
+directory or executable directory for assets. Rebuild after editing the YAML.
+`--config PATH` explicitly loads a custom external document with the same schema.
+Run `just bundle-tui` to copy the self-contained project-resource executable to
+`build/bundle/hrm-tui`; no assets directory is needed. See [distribution.md](distribution.md).
 
 ```yaml
 version: 1
@@ -232,6 +236,13 @@ rebasing, and playback animation as other jumps. Future YAML levels can opt in
 by listing `jumpifnegative` under `instructions`. OJ levels 1–3 keep their original
 permissions and reject this extension. Existing saves for unchanged levels keep
 their previous instruction-permission identity.
+
+Levels 6–10 practice absolute values (2 slots, slot 1 = 0), pairwise maxima
+(2 slots), prefix sums (slot 0 = 0), zero-delimited group sums (2 zero presets),
+and nonnegative multiplication by repeated addition (5 slots, slots 3 = 0 and
+4 = 1). Inputs cover signed values, ties, zero values, empty groups, cancelling
+sums, and zero factors where applicable. Reference programs and additional edge
+cases are exercised in application tests, and are not provided as starter programs.
 YAML loading lives in the C++20 application library; the C++11 kernel and
 single-file OJ submission do not depend on YAML or FTXUI.
 

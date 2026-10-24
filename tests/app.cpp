@@ -489,7 +489,32 @@ void animation_tests() {
 /// Compare YAML levels with OJ data and reject malformed game configurations.
 void config_tests() {
   const auto game = hrm_app::load_config("assets/game.yaml");
-  check(game.levels.size() == 5, "YAML levels missing");
+  check(game.levels.size() == 10, "YAML levels missing");
+  const auto bundled = hrm_app::load_bundled_config();
+  check(bundled.levels.size() == game.levels.size(), "bundled level count is stale");
+  for (std::size_t i = 0; i < game.levels.size(); ++i) {
+    const auto &source = game.levels[i];
+    const auto &embedded = bundled.levels[i];
+    check(
+      source.title == embedded.title && source.definition.id == embedded.definition.id &&
+        source.definition.description == embedded.definition.description &&
+        source.definition.input == embedded.definition.input &&
+        source.definition.target == embedded.definition.target &&
+        source.definition.floor_size == embedded.definition.floor_size &&
+        source.definition.allowed_opcodes == embedded.definition.allowed_opcodes &&
+        source.definition.initial_floor.size() == embedded.definition.initial_floor.size(),
+      "embedded levels must match the authored YAML"
+    );
+    for (std::size_t slot = 0; slot < source.definition.initial_floor.size(); ++slot) {
+      check(
+        source.definition.initial_floor[slot].occupied ==
+            embedded.definition.initial_floor[slot].occupied &&
+          source.definition.initial_floor[slot].value ==
+            embedded.definition.initial_floor[slot].value,
+        "embedded floor presets differ from YAML"
+      );
+    }
+  }
   for (std::size_t i = 0; i < 3; ++i) {
     hrm::LevelDefinition builtin;
     hrm::load_builtin_level(static_cast<int>(i + 1), builtin);
@@ -664,6 +689,95 @@ void config_tests() {
   std::filesystem::remove(test_path);
 }
 
+/// Solve each new puzzle with real instructions and repeat against additional edge cases.
+void new_level_tests() {
+  const auto game = hrm_app::load_bundled_config();
+  const std::vector<std::vector<std::string>> solutions = {{"inbox",
+                                                             "jumpifnegative 5",
+                                                             "outbox",
+                                                             "jump 1",
+                                                             "copyto 0",
+                                                             "copyfrom 1",
+                                                             "sub 0",
+                                                             "outbox",
+                                                             "jump 1"},
+    {"inbox",
+      "copyto 0",
+      "inbox",
+      "copyto 1",
+      "sub 0",
+      "jumpifnegative 10",
+      "copyfrom 1",
+      "outbox",
+      "jump 1",
+      "copyfrom 0",
+      "outbox",
+      "jump 1"},
+    {"inbox", "add 0", "copyto 0", "outbox", "jump 1"},
+    {"inbox",
+      "jumpifzero 6",
+      "add 0",
+      "copyto 0",
+      "jump 1",
+      "copyfrom 0",
+      "outbox",
+      "copyfrom 1",
+      "copyto 0",
+      "jump 1"},
+    {"inbox",
+      "copyto 0",
+      "inbox",
+      "copyto 1",
+      "copyfrom 3",
+      "copyto 2",
+      "copyfrom 1",
+      "jumpifzero 16",
+      "copyfrom 2",
+      "add 0",
+      "copyto 2",
+      "copyfrom 1",
+      "sub 4",
+      "copyto 1",
+      "jump 7",
+      "copyfrom 2",
+      "outbox",
+      "jump 1"}};
+  const std::vector<std::vector<hrm::Value>> inputs = {{0, -1, 1, -20, 20},
+    {-2, -2, 0, 0, 5, -4, -9, -1, 0, -1},
+    {0, 0, 2, -2, -3, 3},
+    {0, 0, 1, -1, 0, -5, 0, 2, 3, 0},
+    {0, 0, 0, 1, 1, 0, 1, 1, 4, 3}};
+  const std::vector<std::vector<hrm::Value>> targets = {{0, 1, 1, 20, 20},
+    {-2, 0, 5, -1, 0},
+    {0, 0, 2, 0, -3, 0},
+    {0, 0, 0, -5, 5},
+    {0, 0, 0, 1, 12}};
+  for (std::size_t i = 0; i < solutions.size(); ++i) {
+    auto level = game.levels[i + 5].definition;
+    check(level.id == static_cast<int>(i + 6), "new levels must retain IDs 6 through 10");
+    for (int variant = 0; variant < 2; ++variant) {
+      if (variant) {
+        level.input = inputs[i];
+        level.target = targets[i];
+      }
+      hrm_app::Session session(level, hrm_app::Editor(solutions[i]));
+      for (int step = 0;
+        step < 10000 && session.machine().state().status == hrm::ExecutionStatus::Running;
+        ++step) {
+        session.next();
+      }
+      check(
+        session.machine().state().verdict == hrm::Verdict::Success,
+        "new puzzle or edge case is not solvable by its reference program"
+      );
+      check(
+        session.machine().state().output == level.target,
+        "new puzzle produced the wrong output sequence"
+      );
+    }
+  }
+}
+
 /// Verify successful-only persistence, jump round trips, stale levels, and damaged saves.
 void solution_tests() {
   const auto directory = std::filesystem::path("build/tests/solutions");
@@ -737,6 +851,7 @@ int main() {
     playback_tests();
     animation_tests();
     config_tests();
+    new_level_tests();
     solution_tests();
     std::cout << "Editor, playback, YAML, robot animation, and saved solution tests passed\n";
   } catch (const std::exception &error) {

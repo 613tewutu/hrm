@@ -54,3 +54,62 @@ levels:
     floor_size: 6
     initial_floor: {4: 0, 5: 1}
     instructions: [inbox, outbox, copyfrom, copyto, add, sub, jump, jumpifzero, jumpifnegative]
+
+  - id: 6
+    title: Absolute delivery
+    description: >-
+      Output the absolute value of each input, preserving its order.
+      Negative values become positive; zero stays zero. Slot 0 is workspace
+      and slot 1 starts with 0.
+    input: [-8, 0, 5, -1, 12, -6, 3]
+    target: [8, 0, 5, 1, 12, 6, 3]
+    floor_size: 2
+    initial_floor: {1: 0}
+    instructions: [inbox, outbox, copyfrom, copyto, add, sub, jump, jumpifzero, jumpifnegative]
+
+  - id: 7
+    title: Larger partner
+    description: >-
+      Take two numbers at a time and output the larger one. When they are
+      equal, output that value once. Repeat until INBOX is empty.
+      Two empty floor slots are available.
+    input: [3, 8, -4, -9, 7, 7, 0, 5, -2, 0, 9, -1]
+    target: [8, -4, 7, 5, 0, 9]
+    floor_size: 2
+    instructions: [inbox, outbox, copyfrom, copyto, add, sub, jump, jumpifzero, jumpifnegative]
+
+  - id: 8
+    title: Running total
+    description: >-
+      After each input, output the sum of all numbers read so far.
+      Zero is an ordinary input and negative values reduce the total.
+      Slot 0 starts with 0 and can store your running total.
+    input: [3, -1, 4, 0, -6, 2, -2]
+    target: [3, 2, 6, 6, 0, 2, 0]
+    floor_size: 1
+    initial_floor: {0: 0}
+    instructions: [inbox, outbox, copyfrom, copyto, add, sub, jump, jumpifzero, jumpifnegative]
+
+  - id: 9
+    title: Batch totals
+    description: >-
+      Zero ends a group. Output the sum of each group, then start a new one.
+      Consecutive zeroes form empty groups with sum 0. Every group ends with
+      a zero. Slots 0 and 1 both start with 0.
+    input: [3, 4, 0, -2, 5, 0, 0, 8, -8, 0, 6, 0]
+    target: [7, 3, 0, 0, 6]
+    floor_size: 2
+    initial_floor: {0: 0, 1: 0}
+    instructions: [inbox, outbox, copyfrom, copyto, add, sub, jump, jumpifzero, jumpifnegative]
+
+  - id: 10
+    title: Product line
+    description: >-
+      Take two nonnegative integers at a time and output their product.
+      Build multiplication from repeated addition. A zero factor produces 0.
+      Five floor slots are available; slot 3 starts with 0 and slot 4 with 1.
+    input: [3, 4, 0, 5, 7, 0, 2, 6, 1, 9, 5, 3]
+    target: [12, 0, 0, 12, 9, 15]
+    floor_size: 5
+    initial_floor: {3: 0, 4: 1}
+    instructions: [inbox, outbox, copyfrom, copyto, add, sub, jump, jumpifzero, jumpifnegative]

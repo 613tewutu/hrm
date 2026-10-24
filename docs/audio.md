@@ -3,7 +3,8 @@
 TUI and GUI share `hrm-audio`, a C++20 audio module backed by raylib. The C++11
 kernel and packed OJ submission have no audio dependency. Both frontends require
 raylib, including TUI-only builds. No sound files or additional audio libraries
-are required at runtime.
+are required at runtime. `just bundle-tui` includes the audio code and score in
+the same executable as the embedded levels; audition WAV exports are optional.
 
 The original eight-bar background loop runs at 112 BPM for about 17 seconds.
 It combines a 25% pulse melody, pulse arpeggios, triangle bass, and noise

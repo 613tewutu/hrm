@@ -39,3 +39,13 @@ test-audio:
 gui:
   xmake build hrm-gui
   xmake run hrm-gui
+
+# Bundle the TUI executable with embedded levels and procedural audio.
+bundle-tui output="build/bundle/hrm-tui":
+  xmake build hrm-tui
+  xmake lua tools/bundle-tui.lua "{{output}}"
+
+# Prove the copied binary loads every default level without external asset files.
+test-bundle:
+  just bundle-tui
+  python tests/bundle.py

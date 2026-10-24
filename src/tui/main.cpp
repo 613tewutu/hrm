@@ -1760,22 +1760,6 @@ private:
   std::shared_ptr<CommandStack> stack_;
 };
 
-/// Locate the default YAML configuration using working-directory precedence.
-///
-/// @param executable Process executable path used if the host cannot resolve its own binary.
-/// @return The local assets path or an assets path beside the executable for the loader to check.
-std::filesystem::path default_config(const char *executable) {
-  if (std::filesystem::exists("assets/game.yaml")) {
-    return "assets/game.yaml";
-  }
-  std::error_code error;
-  auto path = std::filesystem::read_symlink("/proc/self/exe", error);
-  if (error) {
-    path = std::filesystem::absolute(executable);
-  }
-  return path.parent_path() / "assets/game.yaml";
-}
-
 } // namespace
 
 /// Parse frontend options and run the interactive workroom or a single preview frame.
@@ -1785,7 +1769,7 @@ std::filesystem::path default_config(const char *executable) {
 /// @return Zero after normal exit/help, or one after a configuration or argument failure.
 int main(int argc, char **argv) {
   try {
-    auto config = default_config(argv[0]);
+    std::optional<std::filesystem::path> config;
     int level = 1, width = 140, height = 44;
     bool preview = false, audio_enabled = true;
     for (int i = 1; i < argc; ++i) {
@@ -1825,7 +1809,7 @@ int main(int argc, char **argv) {
         throw std::runtime_error("unknown option: " + argument);
       }
     }
-    auto game = hrm_app::load_config(config);
+    auto game = config ? hrm_app::load_config(*config) : hrm_app::load_bundled_config();
     if (std::none_of(game.levels.begin(), game.levels.end(), [&](const auto &item) {
           return item.definition.id == level;
         })) {

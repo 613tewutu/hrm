@@ -74,6 +74,8 @@ if has_config("tui") or has_config("gui") then
   target("hrm-app")
     set_kind("static")
     set_languages("c++20")
+    add_rules("utils.bin2c")
+    add_files("assets/game.yaml", {rule = "utils.bin2c"})
     add_files("src/app/*.cpp")
     add_headerfiles("include/(hrm_app/*.hpp)")
     add_includedirs("include", {public = true})
@@ -97,10 +99,6 @@ if has_config("tui") then
     add_files("src/tui/*.cpp")
     add_deps("hrm-app", "hrm-audio")
     add_packages("ftxui", {components = {"component"}})
-    after_build(function (target)
-      os.mkdir(path.join(target:targetdir(), "assets"))
-      os.cp("assets/game.yaml", path.join(target:targetdir(), "assets/game.yaml"))
-    end)
   target_end()
 end
 
