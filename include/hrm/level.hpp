@@ -14,10 +14,15 @@ struct LevelDefinition {
   std::vector<Value> input;
   std::vector<Value> target;
   std::size_t floor_size = 0;
-  std::bitset<8> allowed_opcodes;
+  std::vector<Cell> initial_floor; // Optional preset cells; omitted positions start empty.
+  std::bitset<opcode_count> allowed_opcodes;
 };
 
-// Return false for an unknown ID, leaving the destination unchanged.
+/// Load one of the three built-in assignment levels.
+///
+/// @param id One-based built-in level ID.
+/// @param destination Receives the complete level definition on success.
+/// @return True when the ID exists; false leaves destination unchanged.
 bool load_builtin_level(int id, LevelDefinition &destination);
 
 } // namespace hrm

@@ -51,13 +51,13 @@ DecodeResult decode_line(const std::string &line) {
   std::istringstream tokens(line);
   std::string name;
   tokens >> name;
-  const char *names[] = {"inbox",  "outbox",   "add",  "sub",
-                         "copyto", "copyfrom", "jump", "jumpifzero"};
+  const char *names[] =
+    {"inbox", "outbox", "add", "sub", "copyto", "copyfrom", "jump", "jumpifzero", "jumpifnegative"};
   std::size_t index = 0;
-  while (index < 8 && name != names[index]) {
+  while (index < opcode_count && name != names[index]) {
     ++index;
   }
-  if (index == 8) {
+  if (index == opcode_count) {
     result.error = ErrorCode::UnknownOpcode;
     return result;
   }

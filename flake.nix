@@ -29,8 +29,10 @@
               ninja
               pkg-config
               just
+              tmux
               python3
               clang-tools
+              ruff
               ripgrep
               git
               cacert
@@ -39,6 +41,7 @@
             buildInputs = with pkgs; [
               ftxui
               raylib
+              yaml-cpp
             ];
           };
         }

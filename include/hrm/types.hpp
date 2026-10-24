@@ -11,11 +11,18 @@ struct Cell {
   bool occupied = false;
   Value value = 0;
 
+  /// Create an empty cell.
   Cell() = default;
-  explicit Cell(Value number) : occupied(true), value(number) {}
+  /// Create an occupied cell containing the supplied value, including zero.
+  explicit Cell(Value number)
+    : occupied(true),
+      value(number) {
+  }
 };
 
-enum class Opcode { Inbox, Outbox, Add, Sub, CopyTo, CopyFrom, Jump, JumpIfZero };
+enum class Opcode { Inbox, Outbox, Add, Sub, CopyTo, CopyFrom, Jump, JumpIfZero, JumpIfNegative };
+
+constexpr std::size_t opcode_count = 9;
 
 enum class ErrorCode {
   None,

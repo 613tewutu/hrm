@@ -6,10 +6,18 @@
 namespace hrm {
 namespace {
 
+/// Return whether a signed address fits the zero-based container range without narrowing.
 bool valid_index(Value index, std::size_t size) {
   return index >= 0 && static_cast<std::uintmax_t>(index) < static_cast<std::uintmax_t>(size);
 }
 
+/// Compute signed arithmetic only when its result is representable.
+///
+/// @param left Current hand value.
+/// @param right Floor-cell value to add or subtract.
+/// @param subtract Select subtraction instead of addition.
+/// @param result Receives the computed value only on success.
+/// @return False on overflow, leaving result unchanged; true on a valid operation.
 bool checked_arithmetic(Value left, Value right, bool subtract, Value &result) {
   const Value minimum = std::numeric_limits<Value>::min();
   const Value maximum = std::numeric_limits<Value>::max();
@@ -30,16 +38,24 @@ bool checked_arithmetic(Value left, Value right, bool subtract, Value &result) {
 } // namespace
 
 Machine::Machine(LevelDefinition level, Program program)
-    : level_(std::move(level)), program_(std::move(program)) {
+  : level_(std::move(level)),
+    program_(std::move(program)) {
   reset();
 }
 
-const MachineState &Machine::state() const { return state_; }
-const LevelDefinition &Machine::level() const { return level_; }
-const Program &Machine::program() const { return program_; }
+const MachineState &Machine::state() const {
+  return state_;
+}
+const LevelDefinition &Machine::level() const {
+  return level_;
+}
+const Program &Machine::program() const {
+  return program_;
+}
 
 void Machine::reset() {
   state_ = MachineState();
+  state_.floor = level_.initial_floor;
   state_.floor.resize(level_.floor_size);
   cache_.assign(program_.instructions.size(), CachedInstruction());
   if (program_.instructions.empty()) {
@@ -87,18 +103,20 @@ StepResult Machine::step() {
   }
 
   const bool uses_floor = opcode == Opcode::Add || opcode == Opcode::Sub ||
-                          opcode == Opcode::CopyTo || opcode == Opcode::CopyFrom;
-  const bool jumps = opcode == Opcode::Jump || opcode == Opcode::JumpIfZero;
+    opcode == Opcode::CopyTo || opcode == Opcode::CopyFrom;
+  const bool jumps =
+    opcode == Opcode::Jump || opcode == Opcode::JumpIfZero || opcode == Opcode::JumpIfNegative;
   if (uses_floor && !valid_index(instruction.operand, state_.floor.size())) {
     return fault(result, ErrorCode::InvalidFloorIndex);
   }
-  if (jumps && (instruction.operand < 1 ||
-                !valid_index(instruction.operand - 1, program_.instructions.size()))) {
+  if (jumps &&
+    (instruction.operand < 1 ||
+      !valid_index(instruction.operand - 1, program_.instructions.size()))) {
     return fault(result, ErrorCode::InvalidJumpTarget);
   }
   const bool needs_hand = opcode == Opcode::Outbox || opcode == Opcode::Add ||
-                          opcode == Opcode::Sub || opcode == Opcode::CopyTo ||
-                          opcode == Opcode::JumpIfZero;
+    opcode == Opcode::Sub || opcode == Opcode::CopyTo || opcode == Opcode::JumpIfZero ||
+    opcode == Opcode::JumpIfNegative;
   if (needs_hand && !state_.hand.occupied) {
     return fault(result, ErrorCode::EmptyHand);
   }
@@ -130,8 +148,12 @@ StepResult Machine::step() {
   case Opcode::Add:
   case Opcode::Sub: {
     Value value = 0;
-    if (!checked_arithmetic(state_.hand.value, state_.floor[floor_index].value,
-                            opcode == Opcode::Sub, value)) {
+    if (!checked_arithmetic(
+          state_.hand.value,
+          state_.floor[floor_index].value,
+          opcode == Opcode::Sub,
+          value
+        )) {
       return fault(result, ErrorCode::ArithmeticOverflow);
     }
     state_.hand.value = value;
@@ -142,6 +164,11 @@ StepResult Machine::step() {
     break;
   case Opcode::JumpIfZero:
     if (state_.hand.value == 0) {
+      next_pc = static_cast<std::size_t>(instruction.operand - 1);
+    }
+    break;
+  case Opcode::JumpIfNegative:
+    if (state_.hand.value < 0) {
       next_pc = static_cast<std::size_t>(instruction.operand - 1);
     }
     break;

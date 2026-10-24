@@ -7,6 +7,11 @@
 
 namespace {
 
+/// Read and validate one complete signed decimal token from the OJ envelope.
+///
+/// @param input Stream positioned before the next level/count token.
+/// @param value Receives the parser value; callers must ignore it on failure.
+/// @return True only when extraction and strict integer parsing both succeed.
 bool read_number(std::istream &input, hrm::Value &value) {
   std::string token;
   if (!(input >> token)) {
@@ -17,6 +22,7 @@ bool read_number(std::istream &input, hrm::Value &value) {
   return result.error == hrm::ErrorCode::None;
 }
 
+/// Report an invalid input envelope to stderr and return a failing process status.
 int invalid_input() {
   // The PDF defines no OJ verdict for a malformed input envelope.
   std::cerr << "Invalid OJ input\n";
@@ -25,6 +31,9 @@ int invalid_input() {
 
 } // namespace
 
+/// Read the OJ envelope and execute the shared kernel to a terminal verdict.
+///
+/// @return Zero after one exact verdict line; one for malformed input envelopes.
 int main() {
   std::ios::sync_with_stdio(false);
   std::cin.tie(nullptr);
@@ -32,8 +41,8 @@ int main() {
   hrm::Value level_id = 0;
   hrm::Value count = 0;
   if (!read_number(std::cin, level_id) || level_id < 1 || level_id > 3 ||
-      !read_number(std::cin, count) || count < 0 ||
-      static_cast<std::uintmax_t>(count) > std::numeric_limits<std::size_t>::max()) {
+    !read_number(std::cin, count) || count < 0 ||
+    static_cast<std::uintmax_t>(count) > std::numeric_limits<std::size_t>::max()) {
     return invalid_input();
   }
   std::string remainder;

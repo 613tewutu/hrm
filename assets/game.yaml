@@ -1,0 +1,115 @@
+version: 1
+title: Human Resource Machine
+levels:
+  - id: 1
+    title: First day
+    description: >-
+      Move every block from INBOX to OUTBOX, keeping the original order.
+      Add commands from the palette. Select a card to insert after it.
+    input: [1, 2]
+    target: [1, 2]
+    floor_size: 0
+    instructions: [inbox, outbox]
+
+  - id: 2
+    title: Two sides
+    description: >-
+      For each pair, output first minus second, then second minus first.
+      Jump arrows land on empty cards; insert a command below a landing card.
+    input: [3, 9, 5, 1, -2, -2, 9, -9]
+    target: [-6, 6, 4, -4, 0, 0, 18, -18]
+    floor_size: 3
+    instructions: [inbox, outbox, copyfrom, copyto, add, sub, jump, jumpifzero]
+
+  - id: 3
+    title: Equal partners
+    description: >-
+      Take two blocks at a time. Output one of them only when they are equal;
+      otherwise discard both. Repeat until the input belt is empty.
+    input: [6, 2, 7, 7, -9, 3, -3, -3]
+    target: [7, -3]
+    floor_size: 3
+    instructions: [inbox, outbox, copyfrom, copyto, add, sub, jump, jumpifzero]
+
+  - id: 4
+    title: Triple it
+    description: >-
+      Multiply every number from INBOX by 3 and send the result to OUTBOX,
+      keeping the original order. One floor slot is available for temporary
+      storage.
+    input: [2, -3, 0, 5, -1, 7]
+    target: [6, -9, 0, 15, -3, 21]
+    floor_size: 1
+    instructions: [inbox, outbox, copyfrom, copyto, add, sub, jump, jumpifzero]
+
+  - id: 5
+    title: Same sign
+    description: >-
+      Take two nonzero numbers at a time. Output 0 when both are positive or
+      both are negative; output 1 when their signs differ. Repeat until INBOX
+      is empty. Six floor slots are available: slot 4 starts with 0 and slot 5
+      starts with 1.
+    input: [5, 9, -4, -8, 7, -3, -6, 2, 1, 1, -1, -1]
+    target: [0, 0, 1, 1, 0, 0]
+    floor_size: 6
+    initial_floor: {4: 0, 5: 1}
+    instructions: [inbox, outbox, copyfrom, copyto, add, sub, jump, jumpifzero, jumpifnegative]
+
+  - id: 6
+    title: Absolute delivery
+    description: >-
+      Output the absolute value of each input, preserving its order.
+      Negative values become positive; zero stays zero. Slot 0 is workspace
+      and slot 1 starts with 0.
+    input: [-8, 0, 5, -1, 12, -6, 3]
+    target: [8, 0, 5, 1, 12, 6, 3]
+    floor_size: 2
+    initial_floor: {1: 0}
+    instructions: [inbox, outbox, copyfrom, copyto, add, sub, jump, jumpifzero, jumpifnegative]
+
+  - id: 7
+    title: Larger partner
+    description: >-
+      Take two numbers at a time and output the larger one. When they are
+      equal, output that value once. Repeat until INBOX is empty.
+      Two empty floor slots are available.
+    input: [3, 8, -4, -9, 7, 7, 0, 5, -2, 0, 9, -1]
+    target: [8, -4, 7, 5, 0, 9]
+    floor_size: 2
+    instructions: [inbox, outbox, copyfrom, copyto, add, sub, jump, jumpifzero, jumpifnegative]
+
+  - id: 8
+    title: Running total
+    description: >-
+      After each input, output the sum of all numbers read so far.
+      Zero is an ordinary input and negative values reduce the total.
+      Slot 0 starts with 0 and can store your running total.
+    input: [3, -1, 4, 0, -6, 2, -2]
+    target: [3, 2, 6, 6, 0, 2, 0]
+    floor_size: 1
+    initial_floor: {0: 0}
+    instructions: [inbox, outbox, copyfrom, copyto, add, sub, jump, jumpifzero, jumpifnegative]
+
+  - id: 9
+    title: Batch totals
+    description: >-
+      Zero ends a group. Output the sum of each group, then start a new one.
+      Consecutive zeroes form empty groups with sum 0. Every group ends with
+      a zero. Slots 0 and 1 both start with 0.
+    input: [3, 4, 0, -2, 5, 0, 0, 8, -8, 0, 6, 0]
+    target: [7, 3, 0, 0, 6]
+    floor_size: 2
+    initial_floor: {0: 0, 1: 0}
+    instructions: [inbox, outbox, copyfrom, copyto, add, sub, jump, jumpifzero, jumpifnegative]
+
+  - id: 10
+    title: Product line
+    description: >-
+      Take two nonnegative integers at a time and output their product.
+      Build multiplication from repeated addition. A zero factor produces 0.
+      Five floor slots are available; slot 3 starts with 0 and slot 4 with 1.
+    input: [3, 4, 0, 5, 7, 0, 2, 6, 1, 9, 5, 3]
+    target: [12, 0, 0, 12, 9, 15]
+    floor_size: 5
+    initial_floor: {3: 0, 4: 1}
+    instructions: [inbox, outbox, copyfrom, copyto, add, sub, jump, jumpifzero, jumpifnegative]

@@ -28,6 +28,7 @@ bool load_builtin_level(int id, LevelDefinition &destination) {
   } else {
     return false;
   }
+  level.allowed_opcodes.reset(static_cast<std::size_t>(Opcode::JumpIfNegative));
   destination = std::move(level);
   return true;
 }
