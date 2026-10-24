@@ -20,6 +20,12 @@ class Terminal:
     def __init__(self, binary: Path) -> None:
         self.temporary = tempfile.TemporaryDirectory(prefix="hrm-drag-")
         self.base = ["tmux", "-S", str(Path(self.temporary.name) / "socket")]
+        self.binary = binary
+        self.config = Path(self.temporary.name) / "config"
+        self.start()
+
+    def start(self, level: int = 2, enter: bool = True) -> None:
+        """Launch with isolated progress and optionally enter the highlighted startup level."""
         self.command(
             "new-session",
             "-d",
@@ -31,9 +37,13 @@ class Terminal:
             "test",
             "-c",
             str(ROOT),
-            f"{shlex.quote(str(binary))} --level 2",
+            f"env COLORTERM=truecolor XDG_CONFIG_HOME={shlex.quote(str(self.config))} "
+            f"{shlex.quote(str(self.binary))} --level {level}",
         )
-        self.wait_for("COMMANDS")
+        self.wait_for("CHOOSE A LEVEL")
+        if enter:
+            self.keys("Enter")
+            self.wait_for("COMMANDS")
 
     def command(self, *arguments: str) -> str:
         """Run a command against this test's private server."""
@@ -116,6 +126,72 @@ class DragTests(unittest.TestCase):
         """Start with an empty level-2 command stack."""
         self.terminal = Terminal(self.binary)
         self.addCleanup(self.terminal.close)
+
+    def test_mascot_colors(self) -> None:
+        """Flow rainbow colors before input, then use yellow and red only after execution."""
+        ui = self.terminal
+
+        def sprite_colors() -> list[str]:
+            screen = ui.command("capture-pane", "-p", "-e", "-t", "test")
+            row = next(line for line in screen.splitlines() if "▐" in line)
+            prefix, suffix = row.split("▐", 1)
+            tint = re.findall(r"\x1b\[[0-9;]*m", prefix)[-1]
+            colors = [tint]
+            for token in re.findall(r"\x1b\[[0-9;]*m|.", suffix):
+                if token.startswith("\x1b"):
+                    tint = token
+                else:
+                    colors.append(tint)
+                if len(colors) == 7:
+                    break
+            return colors
+
+        initial = sprite_colors()
+        self.assertGreater(len(set(initial)), 3, repr(initial))
+        time.sleep(0.2)
+        self.assertNotEqual(sprite_colors(), initial)
+        ui.mouse(2, 4, "move")
+        self.assertGreater(len(set(sprite_colors())), 3)
+        ui.keys("Tab")
+        yellow = sprite_colors()
+        self.assertLess(len(set(yellow)), len(set(initial)))
+        ui.keys("r")
+        self.assertEqual(sprite_colors(), yellow)
+        ui.click_palette("outbox")
+        ui.keys("Right")
+        ui.wait_for("ERROR #1")
+        self.assertNotEqual(sprite_colors(), yellow)
+        ui.keys("r")
+        self.assertEqual(sprite_colors(), yellow)
+
+    def test_levels_and_solutions(self) -> None:
+        """Choose with slash, save a win, restart, and restore the saved program."""
+        ui = self.terminal
+        self.assertNotIn("Human Resource Machine", ui.screen())
+        ui.keys("/")
+        ui.wait_for("CHOOSE A LEVEL")
+        ui.keys("Up", "Enter")
+        ui.wait_for("First day")
+        for name in ("inbox", "outbox", "inbox", "outbox"):
+            ui.click_palette(name)
+        ui.keys("Space")
+        ui.wait_for("SUCCESS", timeout=5)
+        saved = ui.config / "hrm/level-1.yaml"
+        self.assertTrue(saved.is_file())
+        ui.keys("/")
+        ui.wait_for("[completed]")
+        ui.keys("Down", "Enter")
+        ui.wait_for("Two sides")
+        self.assertEqual(ui.commands(), [])
+        ui.command("kill-server")
+        ui.start(level=1, enter=False)
+        ui.wait_for("[completed]")
+        ui.keys("l")
+        ui.wait_for("Saved solution loaded")
+        self.assertEqual(ui.commands(), ["inbox", "outbox", "inbox", "outbox"])
+        self.assertIn("steps 0", ui.screen())
+        ui.keys("Space")
+        ui.wait_for("SUCCESS", timeout=5)
 
     def test_insert_reorder_cancel(self) -> None:
         """Drop at the start/middle/end and preserve the program on cancellation."""
@@ -248,6 +324,84 @@ class DragTests(unittest.TestCase):
         ui.mouse(*first_position, "move")
         ui.mouse(*first_position, "release")
         self.assertEqual(ui.commands()[0], "outbox")
+
+    def test_robot_error(self) -> None:
+        """Keep the normal silhouette after a fault and allow rewind."""
+        ui = self.terminal
+        ui.click_palette("outbox")
+        before = next(
+            (line.index("▐"), y) for y, line in enumerate(ui.screen().splitlines()) if "▐" in line
+        )
+        ui.keys("Right")
+        ui.wait_for("BLOCKED")
+        ui.wait_for("ERROR #1")
+        time.sleep(0.3)
+        after = next(
+            (line.index("▐"), y) for y, line in enumerate(ui.screen().splitlines()) if "▐" in line
+        )
+        self.assertEqual(before, after)
+        self.assertIn("8 remaining", ui.screen())
+        self.assertIn("HAND: empty", ui.screen())
+        self.assertIn("▐▛███▛█", ui.screen())
+        self.assertIn("▝▜██████▀", ui.screen())
+        time.sleep(0.4)
+        self.assertIn("▐▛███▛█", ui.screen())
+        ui.keys("Left")
+        self.assertNotIn("ERROR #1", ui.screen())
+        self.assertIn("steps 0", ui.screen())
+
+    def test_robot_motion(self) -> None:
+        """Walk toward commands, freeze on pause, and restore physical state on rewind/reset."""
+        ui = self.terminal
+
+        def position() -> tuple[int, int]:
+            for y, line in enumerate(ui.screen().splitlines()):
+                if "▐" in line:
+                    return line.index("▐"), y
+            self.fail(ui.screen())
+
+        for command in ("inbox", "copyto", "inbox", "sub", "outbox"):
+            ui.click_palette(command)
+        home = position()
+        sx, sy = ui.locate("Speed")
+        ui.mouse(sx + 4, sy, "press")
+        ui.mouse(sx + 4, sy, "release")
+        ui.wait_for("1 steps/s")
+        ui.mouse(*ui.command_position(1), "press")
+        ui.mouse(*ui.command_position(1), "release")
+        ui.keys("Right")
+        ui.wait_for("INBOX · pick up")
+        first = position()
+        time.sleep(0.18)
+        self.assertLess(position()[0], first[0])
+        ui.keys("Space", "Space")
+        ui.wait_for("PAUSED")
+        frozen = position()
+        time.sleep(0.25)
+        self.assertEqual(position(), frozen)
+        ui.keys("Right")
+        ui.wait_for("COPYTO · place copy")
+        first = position()
+        time.sleep(0.18)
+        self.assertGreater(position()[0], first[0])
+        time.sleep(0.85)
+        ui.wait_for("HAND: 3")
+        at_floor = position()
+        ui.keys("Left")
+        self.assertLess(position()[0], at_floor[0])
+        self.assertIn("steps 1", ui.screen())
+        ui.keys("r")
+        self.assertEqual(position(), home)
+        self.assertIn("steps 0", ui.screen())
+        self.assertIn("8 remaining", ui.screen())
+        self.assertIn("HAND: empty", ui.screen())
+        ui.keys("Space")
+        ui.wait_for("FAIL", timeout=7)
+        self.assertIn("▐▛███▛█", ui.screen())
+        self.assertGreater(position()[0], home[0])
+        self.assertIn("1 sent", ui.screen())
+        self.assertIn("steps 5", ui.screen())
+        ui.keys("r")
 
 
 if __name__ == "__main__":

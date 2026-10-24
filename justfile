@@ -20,12 +20,12 @@ tui:
   xmake build hrm-tui
   xmake run hrm-tui
 
-# Check the YAML configuration, command editor, jump links, and playback history.
+# Check YAML, command editing, playback history, and deterministic robot motion.
 test-tui:
   xmake build hrm-app-tests
   xmake run hrm-app-tests
 
-# Exercise palette dragging, reordering, cancellation, and scrolling in tmux.
+# Exercise dragging, scrolling, robot movement, and playback controls in tmux.
 test-tui-drag:
   xmake build hrm-tui
   python tests/tui-drag.py

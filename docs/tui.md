@@ -7,7 +7,7 @@ is supported alongside keyboard navigation.
 Text, borders, and card backgrounds inherit the terminal's default foreground
 and background. Highlights use its ANSI cyan, yellow, blue, and red palette
 entries, so the interface follows the terminal's configured theme without
-forcing a dark background or fixed RGB colors.
+forcing a dark background. Clawd's introductory rainbow uses RGB colors.
 
 The left workroom displays the remaining input belt, the robot's current hand,
 numbered floor slots, and the output belt. The right panel shows the level task,
@@ -16,6 +16,30 @@ Playback controls sit below the left workroom; the command panel uses the full
 remaining terminal height, with editing controls and hints at its own bottom.
 The gold card with a triangle is the current instruction. The blue card is the
 editor selection; selection and execution position are independent.
+
+## Choosing levels and saving solutions
+
+The game opens with a keyboard-driven level picker. Use Up/Down and Enter to
+open a level or resume its draft. Press `/` in the workroom to reopen the picker;
+playback pauses while choosing. Esc returns to the workroom. The old title bar
+and level dropdown are removed, leaving the workroom the full terminal height.
+`--level ID` chooses the initially highlighted entry. `--preview` still renders
+the workroom directly for layout inspection.
+
+Completed levels show a badge. Press **L** or choose **Load solution** to replace
+that level's in-memory draft with its last successful program, reset to step zero.
+Enter preserves the draft instead. Winning programs are saved automatically as
+`~/.config/hrm/level-ID.yaml`, or `$XDG_CONFIG_HOME/hrm/level-ID.yaml` when an
+absolute XDG configuration directory is set. Unsolved drafts remain in memory.
+The saved YAML contains instruction text, resolved numeric jump destinations,
+execution-relevant level data, and the successful attempt count. Writes replace
+files atomically. No terminal layout or animation state is stored.
+
+On startup, saves are checked against the current level data and replayed before
+being marked completed. Changed levels invalidate old completion; corrupt files
+are reported in the picker and do not prevent playing. Verification is bounded
+to one million instruction attempts, which is also the save limit. Saving errors
+are shown in the workroom without discarding the successful run.
 
 ## Building a program
 
@@ -54,6 +78,49 @@ position. Editing commands or links resets machine state. Programs and playback 
 per level while the TUI is open.
 
 ## Playback
+
+The robot walks between the input belt, output belt, and addressed floor cells.
+Each instruction uses a walk, interaction, and settle sequence. Legs alternate
+while walking; the robot reaches during interaction and its held block follows
+the pickup, delivery, or copying path.
+
+Clawd keeps its compact three-line silhouette. On entry, a rainbow gradient
+flows across its pixels until the first keypress, mouse click, or scroll.
+Pointer movement alone leaves the rainbow running. After interaction it uses
+the terminal's yellow accent; reset and level changes do not restart the rainbow.
+An unexecuted empty program does not trigger failure red.
+While idle, it blinks briefly
+every four seconds and stretches its feet between blinks. Walking alternates
+wide and narrow foot placements with a small bob. Block interactions dip the
+body and tuck the feet; arithmetic taps alternate feet. Taken jumps hop with
+tucked feet, while an untaken conditional only taps a foot. An empty inbox
+shows a question mark. Errors and incorrect output turn Clawd red while keeping
+its normal silhouette. The red color persists until rewind, reset, or a program
+edit clears the failure. Idle gestures use their own slow clock; instruction
+gestures follow playback speed.
+
+| Instruction | Motion |
+| --- | --- |
+| `inbox` | Walk left, pick up the next block, and lift it into the hand. An empty belt ends with an empty-inbox signal. |
+| `outbox` | Walk right, lower the held block onto the output belt, and release it. |
+| `copyto X` | Approach floor X and place a moving copy, retaining the held value. |
+| `copyfrom X` | Approach floor X and lift a copy; the floor block remains. |
+| `add X` / `sub X` | Approach floor X, lean/reach, and show the operand and resulting hand value. |
+| `jump` / `jumpifzero` | Hop in place when taken; a nonzero conditional taps a foot. Control-flow changes do not teleport the robot. |
+| Runtime error | Stay in place and turn red; no pickup or placement occurs. |
+
+Motion uses the existing speed slider. Pause freezes the pose and resumes from
+the same phase. Manual Next animates one attempt; pressing Next again settles
+the current attempt and starts the next one. Previous reconstructs both kernel
+state and the prior physical location; Reset returns the robot home. Editing a
+program also resets its pose. Large floors page to the addressed cell.
+
+The kernel still commits one deterministic step. The C++20 presentation model
+captures its before/after states and reveals the new hand, floor, and conveyors
+at the interaction's transfer point (70% of the animation). The current command
+stays highlighted until settling. Robot interpolation and rendering do not enter
+the C++11 kernel or OJ submission. A full-value hand readout remains visible
+even when a block card abbreviates a long number.
 
 | Control | Keyboard | Behavior |
 | --- | --- | --- |
@@ -110,8 +177,11 @@ just test
 
 `--preview` renders one terminal frame without starting an interactive session.
 `just test-tui` checks YAML validation, landing-card compilation, jump rebasing,
-and forward/backward/reset playback. `just test-tui-drag` uses an isolated tmux
+and forward/backward/reset playback, including deterministic robot animation
+phases, destinations, and data-transfer timing. `just test-tui-drag` uses an isolated tmux
 terminal to check real mouse press/move/release events, insertion markers,
-start/middle/end drops, cancellation, reordering, jump links and scrolling. The
-Nix shell includes tmux for this check. Player progress and program persistence
-are future additions.
+start/middle/end drops, cancellation, reordering, jump links, scrolling, walking,
+pause/resume, rewind/reset, and error animations. The
+Nix shell includes tmux for this check. The terminal tests also cover startup
+selection, slash navigation, saved completion, and solution loading after restart;
+their configuration directories are isolated from the player's real progress.

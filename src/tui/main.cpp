@@ -1,5 +1,7 @@
 #include "hrm_app/editor.hpp"
 #include "hrm_app/level_config.hpp"
+#include "hrm_app/robot_animation.hpp"
+#include "hrm_app/solutions.hpp"
 
 #include <ftxui/component/component.hpp>
 #include <ftxui/component/component_base.hpp>
@@ -9,11 +11,13 @@
 #include <ftxui/dom/canvas.hpp>
 #include <ftxui/dom/elements.hpp>
 #include <ftxui/screen/screen.hpp>
+#include <ftxui/screen/string.hpp>
 #include <ftxui/screen/terminal.hpp>
 
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <filesystem>
 #include <functional>
 #include <iostream>
@@ -194,11 +198,19 @@ public:
       const auto &level = config_.levels[i];
       level_names_.push_back(std::to_string(level.definition.id) + " / " + level.title);
       sessions_.push_back(std::make_unique<hrm_app::Session>(level.definition, hrm_app::Editor()));
+      try {
+        solutions_.push_back(solution_store_.load(level.definition));
+      } catch (const std::exception &error) {
+        solutions_.push_back(std::nullopt);
+        picker_message_ = error.what();
+      }
       if (level.definition.id == initial_level) {
         level_index_ = static_cast<int>(i);
       }
     }
     shown_level_ = level_index_;
+    picker_index_ = level_index_;
+    refresh_levels();
     select(session().editor().rows().front().id);
     build_components();
   }
@@ -209,6 +221,8 @@ public:
   }
   /// Set explicit terminal dimensions for a noninteractive preview.
   void set_preview_size(int width, int height) {
+    screen_index_ = 0;
+    level_entered_ = true;
     preview_width_ = width;
     preview_height_ = height;
   }
@@ -218,6 +232,13 @@ public:
   ///
   /// @param now Monotonic UI-loop time used for playback and scroll deadlines.
   void tick(std::chrono::steady_clock::time_point now) {
+    const double elapsed = last_tick_.time_since_epoch().count() == 0
+      ? 0.0
+      : std::chrono::duration<double>(now - last_tick_).count();
+    last_tick_ = now;
+    if (screen_index_ == 1) {
+      return;
+    }
     if (drag_) {
       const auto target = drop_target(drag_->x, drag_->y);
       if (target != drag_->before) {
@@ -237,16 +258,27 @@ public:
       }
       return;
     }
-    if (!playing_) {
-      next_tick_ = now;
-      return;
+    if (!animation_paused_) {
+      mascot_time_ = std::fmod(mascot_time_ + elapsed, 4.0);
+      if (!robot_.active() && now >= next_frame_) {
+        redraw_ = true;
+        next_frame_ = now + std::chrono::milliseconds(mascot_interacted_ ? 100 : 33);
+      }
     }
-    if (now >= next_tick_) {
-      session().next();
-      if (session().machine().state().status != hrm::ExecutionStatus::Running) {
+    const bool was_active = robot_.active();
+    if (robot_.advance(elapsed, speed_, animation_paused_) &&
+      (now >= next_frame_ || !robot_.active())) {
+      redraw_ = true;
+      next_frame_ = now + std::chrono::milliseconds(16);
+    }
+    if (was_active && !robot_.active() &&
+      session().machine().state().status != hrm::ExecutionStatus::Running) {
+      playing_ = false;
+    }
+    if (playing_ && !robot_.active()) {
+      if (!start_step()) {
         playing_ = false;
       }
-      next_tick_ = now + std::chrono::milliseconds(1000 / speed_);
       redraw_ = true;
     }
   }
@@ -270,6 +302,39 @@ private:
   /// Return the currently selected level's session.
   hrm_app::Session &session() {
     return *sessions_[static_cast<std::size_t>(level_index_)];
+  }
+
+  /// Return physical state at the animation's transfer point rather than exposing an early update.
+  const hrm::MachineState &view_state() {
+    return robot_.display_state(session().machine().state());
+  }
+
+  /// Commit one kernel attempt and capture its before/after states for visual playback.
+  bool start_step() {
+    if (session().machine().state().status != hrm::ExecutionStatus::Running) {
+      return false;
+    }
+    const auto before = session().machine().state();
+    const auto row = session().current_row();
+    const auto instruction =
+      hrm::decode_line(session().machine().program().instructions[before.pc].text);
+    const auto result = session().next();
+    if (session().machine().state().verdict == hrm::Verdict::Success) {
+      try {
+        solution_store_.save(session().machine());
+        std::vector<std::string> lines;
+        for (const auto &instruction : session().machine().program().instructions) {
+          lines.push_back(instruction.text);
+        }
+        solutions_[static_cast<std::size_t>(level_index_)] = std::move(lines);
+        refresh_levels();
+        message_ = "Level completed. Solution saved.";
+      } catch (const std::exception &error) {
+        message_ = "Completed, but saving failed: " + std::string(error.what());
+      }
+    }
+    animation_paused_ = false;
+    return robot_.start(instruction.instruction, result, before, session().machine().state(), row);
   }
 
   /// Resolve a pointer position to an insertion boundary in the visible stack.
@@ -299,6 +364,7 @@ private:
   /// @param source_box Laid-out source bounds defining the preserved size and grab offset.
   void begin_drag(hrm::Opcode opcode, RowId source, const Mouse &mouse, const Box &source_box) {
     playing_ = false;
+    animation_paused_ = true;
     DragState state;
     state.opcode = opcode;
     state.source = source;
@@ -408,6 +474,8 @@ private:
     playing_ = false;
     linking_ = 0;
     session().reset();
+    robot_.reset();
+    animation_paused_ = false;
   }
   /// Insert an allowed palette command after the selected row and restart simulation.
   ///
@@ -468,31 +536,49 @@ private:
     }
     playing_ = false;
     linking_ = selected_;
+    animation_paused_ = true;
     message_ = "LINK TARGET: Up/Down + Enter, or click a card. Esc cancels.";
     stack_->TakeFocus();
   }
   /// Pause and attempt the next kernel instruction.
   void next() {
     playing_ = false;
-    session().next();
+    robot_.finish();
+    start_step();
   }
   /// Pause and replay to the state preceding the last instruction attempt.
   void previous() {
     playing_ = false;
     session().previous();
+    robot_.seek(
+      session().machine().level(),
+      session().machine().program(),
+      session().machine().state().attempted
+    );
+    animation_paused_ = false;
   }
   /// Pause and clear execution state while retaining the player's edited program.
   void reset() {
     playing_ = false;
     session().reset();
+    robot_.reset();
+    animation_paused_ = false;
     message_ = "Reset: input, output, hand, floor, and counters are clear.";
   }
   /// Toggle playback, restarting a terminal program before playing again.
   void toggle() {
-    if (!playing_ && session().machine().state().status != hrm::ExecutionStatus::Running) {
-      session().reset();
+    if (playing_) {
+      playing_ = false;
+      animation_paused_ = true;
+      return;
     }
-    playing_ = !playing_ && session().machine().state().status == hrm::ExecutionStatus::Running;
+    if (!robot_.active() && session().machine().state().status != hrm::ExecutionStatus::Running) {
+      session().reset();
+      robot_.reset();
+    }
+    animation_paused_ = false;
+    playing_ =
+      robot_.active() || session().machine().state().status == hrm::ExecutionStatus::Running;
   }
   /// Normalize a valid integer operand, preserve invalid text for runtime checking, and reset.
   void apply_operand() {
@@ -511,9 +597,73 @@ private:
     }
   }
 
+  /// Refresh completion badges without changing the picker selection.
+  void refresh_levels() {
+    picker_names_.clear();
+    for (std::size_t i = 0; i < level_names_.size(); ++i) {
+      picker_names_.push_back((solutions_[i] ? "[completed] " : "[unsolved]  ") + level_names_[i]);
+    }
+  }
+
+  /// Enter a level, optionally replacing its draft with the verified saved solution.
+  void enter_level(bool load_saved) {
+    const auto index = static_cast<std::size_t>(picker_index_);
+    if (load_saved && !solutions_[index]) {
+      picker_message_ = "This level has no saved solution.";
+      return;
+    }
+    if (load_saved) {
+      sessions_[index] = std::make_unique<hrm_app::Session>(
+        config_.levels[index].definition,
+        hrm_app::Editor(*solutions_[index])
+      );
+    }
+    level_index_ = picker_index_;
+    shown_level_ = level_index_;
+    screen_index_ = 0;
+    level_entered_ = true;
+    playing_ = false;
+    linking_ = 0;
+    drag_.reset();
+    robot_.seek(
+      session().machine().level(),
+      session().machine().program(),
+      session().machine().state().attempted
+    );
+    animation_paused_ = false;
+    select(session().editor().rows().front().id);
+    message_ = load_saved ? "Saved solution loaded. Press Play to run it."
+                          : "Build your program. Press / to choose another level.";
+    stack_->TakeFocus();
+  }
+
+  /// Suspend playback while choosing a level, preserving drafts and physical state.
+  void open_levels() {
+    playing_ = false;
+    animation_paused_ = true;
+    drag_.reset();
+    linking_ = 0;
+    picker_index_ = level_index_;
+    picker_message_.clear();
+    screen_index_ = 1;
+    level_menu_->TakeFocus();
+  }
+
   /// Assemble the component tree and bind shared keyboard, mouse, and transport behavior.
   void build_components() {
-    level_menu_ = Dropdown(&level_names_, &level_index_);
+    auto menu_options = MenuOption::Vertical();
+    menu_options.on_enter = [&] {
+      enter_level(false);
+    };
+    level_menu_ = Menu(&picker_names_, &picker_index_, menu_options);
+    open_level_ = action("Open [Enter]", [&] {
+      enter_level(false);
+    });
+    load_solution_ = action("Load solution [L]", [&] {
+      enter_level(true);
+    });
+    picker_controls_ =
+      Container::Vertical({level_menu_, Container::Horizontal({open_level_, load_solution_})});
     stack_ = Make<CommandStack>();
     stack_->draw = [&](bool focused, std::vector<Box> &boxes) {
       return draw_stack(focused, boxes);
@@ -584,13 +734,47 @@ private:
     slider_options.color_inactive = outline;
     speed_slider_ = Slider(slider_options);
     transport_ = Container::Horizontal({clear, back, play, forward, speed_slider_});
-    auto hierarchy = Container::Vertical(
-      {level_menu_, palette_first_, palette_second_, stack_, edit_controls_, transport_}
-    );
-    root_ = Renderer(hierarchy, [&] {
+    auto hierarchy =
+      Container::Vertical({palette_first_, palette_second_, stack_, edit_controls_, transport_});
+    auto screens = Container::Tab({hierarchy, picker_controls_}, &screen_index_);
+    root_ = Renderer(screens, [&] {
       return draw();
     });
     root_ = CatchEvent(root_, [&](Event event) {
+      const auto &input = event.input();
+      const bool keypress = event.is_character() ||
+        (!input.empty() &&
+          (input.size() == 1 ||
+            std::string("ABCDHF~PQRS").find(input.back()) != std::string::npos));
+      const bool interaction = event.is_mouse()
+        ? event.mouse().motion == Mouse::Pressed && event.mouse().button != Mouse::None
+        : keypress && event != Event::Custom && !event.is_cursor_position() &&
+          !event.is_cursor_shape();
+      if (interaction && screen_index_ == 0) {
+        mascot_interacted_ = true;
+      }
+      if (event == Event::Character('/')) {
+        open_levels();
+        return true;
+      }
+      if (screen_index_ == 1) {
+        if (event == Event::Character('l') || event == Event::Character('L')) {
+          enter_level(true);
+          return true;
+        }
+        if (event == Event::Escape && level_entered_) {
+          screen_index_ = 0;
+          stack_->TakeFocus();
+          return true;
+        }
+        if (event == Event::Escape || event == Event::Character('q')) {
+          if (quit) {
+            quit();
+          }
+          return true;
+        }
+        return false;
+      }
       if (drag_ && event == Event::Escape) {
         drag_.reset();
         message_ = "Drag cancelled. Program unchanged.";
@@ -639,7 +823,7 @@ private:
       }
       return false;
     });
-    stack_->TakeFocus();
+    level_menu_->TakeFocus();
   }
 
   /// Render command cards, jump routes, selection, and the current drop boundary.
@@ -653,7 +837,7 @@ private:
     Elements cards;
     Canvas arrows(16, static_cast<int>(rows.size()) * 12);
     std::size_t number = 0;
-    const auto active = session().current_row();
+    const auto active = robot_.active() ? robot_.frame().row : session().current_row();
     for (std::size_t i = 0; i < rows.size(); ++i) {
       const auto &row = rows[i];
       const bool selected = selected_ == row.id;
@@ -720,7 +904,7 @@ private:
   /// @param output Select completed output instead of remaining input.
   /// @return A fixed-width column of value cards, following the latest output when needed.
   Element conveyor(bool output) {
-    const auto &state = session().machine().state();
+    const auto &state = view_state();
     const auto &values = output ? state.output : session().machine().level().input;
     const auto begin = output ? std::size_t(0) : state.input_cursor;
     Elements blocks;
@@ -749,47 +933,267 @@ private:
       size(WIDTH, EQUAL, 13);
   }
 
-  /// Render the robot's hand and numbered floor cells from read-only machine state.
+  /// Draw command-driven walking, reaching, transfers, and floor interactions on a cell canvas.
   Element room() {
-    const auto &state = session().machine().state();
-    Elements floor;
-    for (std::size_t i = 0; i < state.floor.size(); i += 3) {
-      Elements line;
-      for (std::size_t j = i; j < std::min(i + 3, state.floor.size()); ++j) {
-        line.push_back(
-          vbox(
-            {card(
-               text(state.floor[j].occupied ? std::to_string(state.floor[j].value) : "·") |
-               color(ink) | center
-             ),
-              text("[" + std::to_string(j) + "]") | color(muted) | center}
-          ) |
-          size(WIDTH, EQUAL, 10)
+    return canvas([this](Canvas &drawing) {
+      using hrm_app::RobotEffect;
+      using hrm_app::RobotPlace;
+      const int width = drawing.width() / 2;
+      const int height = drawing.height() / 4;
+      if (width <= 0 || height <= 0) {
+        return;
+      }
+      if (width < 13 || height < 16) {
+        drawing.DrawText(0, 0, "ROBOT", teal);
+        return;
+      }
+      const auto &state = view_state();
+      const auto frame = robot_.frame();
+      const bool active = robot_.active();
+      auto write = [&](int x, int y, const std::string &value, Color tint) {
+        if (y >= 0 && y < height) {
+          drawing.DrawText(x * 2, y * 4, value, tint);
+        }
+      };
+      auto box = [&](int center, int top, std::string value, Color tint) {
+        if (value.size() > 7) {
+          value = value.substr(0, 6) + "~";
+        }
+        const int x = std::clamp(center - 4, 0, width - 9);
+        value = std::string((7 - value.size()) / 2, ' ') + value;
+        value.resize(7, ' ');
+        write(x, top, "╭───────╮", tint);
+        write(x, top + 1, "│" + value + "│", tint);
+        write(x, top + 2, "╰───────╯", tint);
+      };
+      const int floor_top = std::clamp(height * 3 / 5, 11, height - 5);
+      const int columns = std::min(3, std::max(1, (width + 1) / 10));
+      const int visible_rows = std::clamp((height - floor_top - 2) / 4, 1, 3);
+      const auto capacity = static_cast<std::size_t>(columns * visible_rows);
+      const auto focus_slot = frame.to.place == RobotPlace::Floor ? frame.to.floor
+        : frame.from.place == RobotPlace::Floor                   ? frame.from.floor
+                                                                  : std::size_t(0);
+      const auto first_slot = focus_slot / capacity * capacity;
+      auto floor_point = [&](std::size_t slot) {
+        if (slot < first_slot || slot >= first_slot + capacity) {
+          return std::pair<double, double>{width / 2.0, static_cast<double>(floor_top)};
+        }
+        const int local = static_cast<int>(slot - first_slot);
+        return std::pair<double, double>{(width - (columns - 1) * 10) / 2.0 +
+            (local % columns) * 10,
+          static_cast<double>(floor_top + (local / columns) * 4)};
+      };
+      const int home_feet = std::clamp(height / 3 + 3, 9, floor_top - 1);
+      auto point = [&](hrm_app::RobotLocation location) {
+        switch (location.place) {
+        case RobotPlace::Inbox:
+          return std::pair<double, double>{5, home_feet};
+        case RobotPlace::Outbox:
+          return std::pair<double, double>{width - 6, home_feet};
+        case RobotPlace::Floor: {
+          auto value = floor_point(location.floor);
+          value.second -= 1;
+          return value;
+        }
+        case RobotPlace::Home:
+          return std::pair<double, double>{width / 2.0, home_feet};
+        }
+        return std::pair<double, double>{width / 2.0, home_feet};
+      };
+
+      std::string caption = "ROBOT";
+      if (active) {
+        switch (frame.effect) {
+        case RobotEffect::Pickup:
+          caption = "INBOX · pick up";
+          break;
+        case RobotEffect::Deliver:
+          caption = "OUTBOX · deliver";
+          break;
+        case RobotEffect::Store:
+          caption = "COPYTO · place copy";
+          break;
+        case RobotEffect::Copy:
+          caption = "COPYFROM · lift copy";
+          break;
+        case RobotEffect::Add:
+          caption = "ADD · calculate";
+          break;
+        case RobotEffect::Subtract:
+          caption = "SUB · calculate";
+          break;
+        case RobotEffect::Jump:
+          caption = "JUMP · turn";
+          break;
+        case RobotEffect::Continue:
+          caption = "NONZERO · continue";
+          break;
+        case RobotEffect::EmptyInbox:
+          caption = "INBOX EMPTY";
+          break;
+        case RobotEffect::Fault:
+          caption = "BLOCKED · error";
+          break;
+        case RobotEffect::Idle:
+          break;
+        }
+      }
+      const auto accent = active && frame.effect == RobotEffect::Fault ? red : teal;
+      write(std::max(0, (width - string_width(caption)) / 2), 0, caption, accent);
+      write(std::max(0, width / 2 - 2), floor_top - 1, "FLOOR", muted);
+      if (state.floor.empty()) {
+        write(std::max(0, width / 2 - 7), floor_top + 1, "No floor slots", muted);
+      }
+      for (std::size_t slot = first_slot;
+        slot < std::min(first_slot + capacity, state.floor.size());
+        ++slot) {
+        const auto position = floor_point(slot);
+        const int x = static_cast<int>(position.first);
+        const int y = static_cast<int>(position.second);
+        const auto tint =
+          active && frame.to.place == RobotPlace::Floor && frame.to.floor == slot ? amber : outline;
+        box(x, y, state.floor[slot].occupied ? std::to_string(state.floor[slot].value) : "-", tint);
+        write(x - 2, y + 3, "[" + std::to_string(slot) + "]", tint);
+      }
+      if (state.floor.size() > capacity) {
+        write(
+          0,
+          height - 2,
+          "floor " + std::to_string(first_slot) + ".." +
+            std::to_string(std::min(first_slot + capacity, state.floor.size()) - 1),
+          muted
         );
       }
-      floor.push_back(hbox(std::move(line)) | center);
-    }
-    if (floor.empty()) {
-      floor.push_back(text("No floor slots") | color(muted) | center);
-    }
-    return vbox(
-             {text("ROBOT") | color(muted) | center,
-               card(
-                 text(state.hand.occupied ? std::to_string(state.hand.value) : "empty hand") |
-                   color(amber) | center,
-                 amber
-               ) |
-                 hcenter,
-               text("  ▄▄▄▄▄  ") | color(teal) | center,
-               text(" ▐ ● ● ▌ ") | color(teal) | center,
-               text("  ▀┬─┬▀  ") | color(teal) | center,
-               text("  ╱│ │╲  ") | color(teal) | center,
-               text("   ╱ ╲   ") | color(teal) | center,
-               filler(),
-               text("FLOOR") | color(muted) | center,
-               vbox(std::move(floor)) | yframe | flex,
-               filler()}
-           ) |
+
+      const std::string hand_readout =
+        state.hand.occupied ? "HAND: " + std::to_string(state.hand.value) : "HAND: empty";
+      write(std::max(0, (width - string_width(hand_readout)) / 2), height - 1, hand_readout, amber);
+
+      const auto from = point(frame.from);
+      const auto to = point(frame.to);
+      int x = static_cast<int>(std::lround(from.first + (to.first - from.first) * frame.travel));
+      int feet =
+        static_cast<int>(std::lround(from.second + (to.second - from.second) * frame.travel));
+      if (frame.walking && frame.gait) {
+        --feet;
+      }
+      if (active && frame.effect == RobotEffect::Jump && frame.phase > 0.25 && frame.phase < 0.75) {
+        --feet;
+      }
+      x = std::clamp(x, 4, width - 5);
+      const bool interacting = active && frame.phase >= 0.55 && frame.phase < 0.85;
+      const int lean = interacting && std::sin(frame.interaction * 3.141592653589793) > 0.6 ? 1 : 0;
+      const bool distressed = (active && frame.effect == RobotEffect::Fault) ||
+        (!active && state.attempted > 0 &&
+          (state.status == hrm::ExecutionStatus::Faulted || state.verdict == hrm::Verdict::Fail));
+      const auto mascot_color = distressed ? red : amber;
+      std::string head = "▐▛███▛█";
+      std::string body = "▝▜██████▀";
+      std::string legs = " ▝▝   ▝▝";
+      int dip = 0;
+      if (!active && !distressed) {
+        if (mascot_time_ > 3.7 && mascot_time_ < 3.9) {
+          head = "▐██████";
+        }
+        if (mascot_time_ > 1.8 && mascot_time_ < 2.2) {
+          legs = " ▘▘   ▘▘";
+        }
+      } else if (!distressed && frame.walking) {
+        legs = frame.gait ? "▝▝     ▝▝" : "  ▝▝ ▝▝";
+      } else if (!distressed && frame.effect == RobotEffect::Jump) {
+        legs = frame.phase > 0.25 && frame.phase < 0.75 ? " ▀▀   ▀▀" : legs;
+      } else if (!distressed && frame.effect == RobotEffect::Continue) {
+        legs = frame.gait ? " ▝▝   ▘▘" : legs;
+      } else if (!distressed && interacting) {
+        switch (frame.effect) {
+        case RobotEffect::Pickup:
+        case RobotEffect::Copy:
+        case RobotEffect::Store:
+        case RobotEffect::Deliver:
+          dip = lean;
+          body = "▀▜██████▀";
+          legs = lean ? " ▀▀   ▀▀" : legs;
+          break;
+        case RobotEffect::Add:
+        case RobotEffect::Subtract:
+          legs = frame.gait ? " ▝▝   ▘▘" : " ▘▘   ▝▝";
+          break;
+        case RobotEffect::EmptyInbox:
+          write(std::min(x + 5, width - 1), feet - 3, "?", amber);
+          break;
+        default:
+          break;
+        }
+      }
+      auto sprite_row = [&](int left, int top, const std::string &glyphs) {
+        if (mascot_interacted_) {
+          write(left, top, glyphs, mascot_color);
+          return;
+        }
+        int column = 0;
+        for (const auto &glyph : Utf8ToGlyphs(glyphs)) {
+          const double hue = std::fmod(
+            mascot_time_ / 4.0 + (left + column - x + 4 + (top - feet + 2) * 0.5) / 10.0,
+            1.0
+          );
+          write(left + column, top, glyph, Color::HSV(static_cast<uint8_t>(hue * 255), 220, 255));
+          ++column;
+        }
+      };
+      sprite_row(x - 3, feet - 2 + dip, head);
+      sprite_row(x - 4, feet - 1 + dip, body);
+      sprite_row(x - 4, feet + dip, legs);
+
+      const bool transfer = interacting &&
+        (frame.effect == RobotEffect::Pickup || frame.effect == RobotEffect::Deliver ||
+          frame.effect == RobotEffect::Store || frame.effect == RobotEffect::Copy);
+      if (state.hand.occupied && (!transfer || frame.effect == RobotEffect::Store)) {
+        box(x, feet - 6 + lean, std::to_string(state.hand.value), amber);
+      } else if (!state.hand.occupied && !transfer) {
+        write(x - 5, feet - 5 + lean, "empty hand", muted);
+      }
+      if (transfer) {
+        std::pair<double, double> start{x, feet - 5 + lean};
+        auto end = start;
+        hrm::Value value = 0;
+        if (frame.effect == RobotEffect::Pickup || frame.effect == RobotEffect::Copy) {
+          value = robot_.after().hand.value;
+          start = frame.effect == RobotEffect::Pickup ? std::pair<double, double>{4, feet - 4}
+                                                      : floor_point(frame.to.floor);
+          if (frame.effect == RobotEffect::Copy) {
+            start.second += 1;
+          }
+        } else {
+          value = robot_.before().hand.value;
+          end = frame.effect == RobotEffect::Deliver
+            ? std::pair<double, double>{width - 5, feet - 4}
+            : floor_point(frame.to.floor);
+          if (frame.effect == RobotEffect::Store) {
+            end.second += 1;
+          }
+        }
+        const double t = frame.interaction * frame.interaction * (3.0 - 2.0 * frame.interaction);
+        box(
+          static_cast<int>(std::lround(start.first + (end.first - start.first) * t)),
+          static_cast<int>(std::lround(start.second + (end.second - start.second) * t)) - 1,
+          std::to_string(value),
+          amber
+        );
+      }
+      if (interacting &&
+        (frame.effect == RobotEffect::Add || frame.effect == RobotEffect::Subtract)) {
+        const auto value = robot_.before().floor[frame.to.floor].value;
+        const std::string calculation = frame.transferred
+          ? "= " + std::to_string(state.hand.value)
+          : (frame.effect == RobotEffect::Add ? "+ " : "- ") + std::to_string(value);
+        write(
+          std::clamp(x + 5, 0, std::max(0, width - static_cast<int>(calculation.size()))),
+          feet - 4,
+          calculation,
+          amber
+        );
+      }
+    }) |
       flex;
   }
 
@@ -823,6 +1227,12 @@ private:
       playing_ = false;
       linking_ = 0;
       drag_.reset();
+      robot_.seek(
+        session().machine().level(),
+        session().machine().program(),
+        session().machine().state().attempted
+      );
+      animation_paused_ = false;
       select(session().editor().rows().front().id);
       message_ = "Level loaded from YAML. Edits and playback are kept per level.";
     }
@@ -830,6 +1240,29 @@ private:
     const auto dimensions = Terminal::Size();
     const int width = preview_width_ ? preview_width_ : dimensions.dimx;
     const int height = preview_height_ ? preview_height_ : dimensions.dimy;
+    if (screen_index_ == 1) {
+      const auto &level = config_.levels[static_cast<std::size_t>(picker_index_)];
+      return vbox(
+               {text("CHOOSE A LEVEL") | bold | color(teal),
+                 separator(),
+                 level_menu_->Render() | vscroll_indicator | frame |
+                   size(HEIGHT, LESS_THAN, std::max(3, height / 3)),
+                 separator(),
+                 text(level.title) | bold,
+                 paragraph(level.definition.description),
+                 text(
+                   solutions_[static_cast<std::size_t>(picker_index_)]
+                     ? "Completed · saved solution available"
+                     : "No saved solution yet"
+                 ) |
+                   color(amber),
+                 hbox({open_level_->Render(), text(" "), load_solution_->Render()}),
+                 paragraph(picker_message_) | color(red),
+                 text("↑/↓ choose · Enter open/resume · L load solution · Esc back · Q quit")}
+             ) |
+        size(WIDTH, EQUAL, std::max(1, std::min(84, width - 4))) | borderRounded | center |
+        color(ink) | bgcolor(background);
+    }
     if (width < 112 || height < 32) {
       drag_.reset();
       return vbox(
@@ -841,14 +1274,16 @@ private:
         center | bgcolor(background);
     }
     const auto &level = config_.levels[static_cast<std::size_t>(level_index_)];
-    const auto &state = session().machine().state();
-    std::string status = playing_ ? "RUNNING" : "PAUSED";
+    const auto &state = view_state();
+    std::string status = playing_             ? "RUNNING"
+      : robot_.active() && !animation_paused_ ? "STEPPING"
+                                              : "PAUSED";
     Color status_color = playing_ ? teal : amber;
-    if (state.verdict == hrm::Verdict::Success) {
+    if (!robot_.active() && state.verdict == hrm::Verdict::Success) {
       status = "SUCCESS";
       status_color = teal;
     }
-    if (state.verdict == hrm::Verdict::Fail) {
+    if (!robot_.active() && state.verdict == hrm::Verdict::Fail) {
       status = "FAIL · output differs from target";
       status_color = red;
     }
@@ -936,36 +1371,40 @@ private:
               erase_->Render()}
           ),
           paragraph(" " + message_) | color(linking_ ? amber : muted),
-          text(" ↑/↓ select · T link · Del remove · Tab · Q quit") | color(muted)}
+          text(" ↑/↓ select · T link · Del · / levels · Q quit") | color(muted)}
       ) |
       size(WIDTH, EQUAL, 52);
-    auto view = vbox(
-                  {hbox(
-                     {text("  " + config_.title) | bold | color(ink),
-                       filler(),
-                       level_menu_->Render() | size(WIDTH, EQUAL, 32)}
-                   ),
-                    separator() | color(outline),
-                    hbox({workroom, separator() | color(outline), commands}) | flex}
-                ) |
-      color(ink) | bgcolor(background);
+    auto view = hbox({workroom, separator() | color(outline), commands}) | flex | color(ink) |
+      bgcolor(background);
     return with_drag_preview(view, width, height);
   }
 
   hrm_app::GameConfig config_;
+  hrm_app::SolutionStore solution_store_{hrm_app::solution_directory()};
+  std::vector<std::optional<std::vector<std::string>>> solutions_;
   std::vector<std::unique_ptr<hrm_app::Session>> sessions_;
   std::vector<std::string> level_names_;
+  std::vector<std::string> picker_names_;
+  std::string picker_message_;
+  int picker_index_ = 0, screen_index_ = 1;
+  bool level_entered_ = false;
   int level_index_ = 0, shown_level_ = 0, speed_ = 4, preview_width_ = 0, preview_height_ = 0;
   RowId selected_ = 0, linking_ = 0;
   bool playing_ = false, redraw_ = false;
   std::string operand_text_ = "0", play_label_ = "Play [Space]";
   std::string message_ =
     "Build a program with the palette. Click a card to select its insertion point.";
-  std::chrono::steady_clock::time_point next_tick_{};
+  std::chrono::steady_clock::time_point last_tick_{};
+  std::chrono::steady_clock::time_point next_frame_{};
   std::chrono::steady_clock::time_point next_scroll_{};
   std::optional<DragState> drag_;
+  hrm_app::RobotAnimation robot_;
+  double mascot_time_ = 0.0;
+  bool mascot_interacted_ = false;
+  bool animation_paused_ = false;
   std::array<Box, 8> palette_boxes_;
   std::array<Component, 8> palette_buttons_;
+  Component picker_controls_, open_level_, load_solution_;
   Component root_, level_menu_, palette_first_, palette_second_, operand_input_, apply_, link_,
     erase_, edit_controls_, transport_, speed_slider_;
   std::shared_ptr<CommandStack> stack_;
