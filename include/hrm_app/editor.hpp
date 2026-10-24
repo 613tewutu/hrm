@@ -119,7 +119,9 @@ public:
   /// Recompile the editor and restart execution from its initial state.
   void reset();
   /// Attempt one instruction using the kernel's terminal-call semantics.
-  void next();
+  ///
+  /// @return Actual kernel transition for presentation adapters to animate.
+  hrm::StepResult next();
   /// Restore the state before the most recent attempted instruction by deterministic replay.
   ///
   /// A fresh session is unchanged. Replaying costs time proportional to prior attempts

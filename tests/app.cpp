@@ -1,5 +1,7 @@
 #include "hrm_app/editor.hpp"
 #include "hrm_app/level_config.hpp"
+#include "hrm_app/robot_animation.hpp"
+#include "hrm_app/solutions.hpp"
 
 #include <filesystem>
 #include <fstream>
@@ -188,6 +190,204 @@ void playback_tests() {
   );
 }
 
+/// Verify physical destinations, transfer timing, pause, replay, and nonmoving control flow.
+void animation_tests() {
+  using hrm_app::RobotEffect;
+  using hrm_app::RobotPlace;
+  hrm::LevelDefinition level;
+  check(hrm::load_builtin_level(2, level), "animation level missing");
+  hrm_app::Session session(
+    level,
+    hrm_app::Editor({"inbox", "copyto 0", "inbox", "add 0", "outbox", "jump 1"})
+  );
+  hrm_app::RobotAnimation robot;
+  auto start = [&] {
+    const auto before = session.machine().state();
+    const auto row = session.current_row();
+    const auto instruction =
+      hrm::decode_line(session.machine().program().instructions[before.pc].text);
+    const auto result = session.next();
+    check(
+      robot.start(instruction.instruction, result, before, session.machine().state(), row),
+      "step must animate"
+    );
+  };
+  start();
+  check(
+    robot.frame().effect == RobotEffect::Pickup && robot.frame().from.place == RobotPlace::Home &&
+      robot.frame().to.place == RobotPlace::Inbox,
+    "inbox must walk from home to the input belt"
+  );
+  check(
+    robot.display_state(session.machine().state()).input_cursor == 0,
+    "input must remain visible before pickup"
+  );
+  robot.advance(0.2, 1, false);
+  check(
+    robot.frame().walking && robot.frame().travel > 0 && robot.frame().travel < 1,
+    "walk must interpolate"
+  );
+  const auto frozen = robot.frame();
+  check(
+    !robot.advance(3, 12, true) && robot.frame().phase == frozen.phase,
+    "pause must freeze the pose"
+  );
+  robot.advance(0.51, 1, false);
+  check(
+    robot.frame().transferred && robot.display_state(session.machine().state()).hand.value == 3,
+    "pickup must expose the new hand at the transfer point"
+  );
+  check(
+    robot.frame().row != 0 && robot.active(),
+    "the executing card must remain active until settling"
+  );
+  robot.finish();
+  start();
+  check(
+    robot.frame().from.place == RobotPlace::Inbox && robot.frame().to.place == RobotPlace::Floor &&
+      robot.frame().to.floor == 0 && robot.frame().effect == RobotEffect::Store,
+    "copyto must approach its addressed floor cell"
+  );
+  check(
+    !robot.display_state(session.machine().state()).floor[0].occupied,
+    "floor update must wait for transfer"
+  );
+  robot.advance(0.18, 4, false);
+  check(
+    robot.display_state(session.machine().state()).floor[0].value == 3,
+    "store must reveal copied floor value"
+  );
+  robot.finish();
+  start();
+  robot.finish();
+  start();
+  check(
+    robot.frame().effect == RobotEffect::Add && robot.frame().to.floor == 0,
+    "add must show an arithmetic interaction at its floor cell"
+  );
+  check(
+    robot.before().hand.value == 9 && robot.after().hand.value == 12,
+    "arithmetic animation must capture both values"
+  );
+  robot.finish();
+  start();
+  check(
+    robot.frame().effect == RobotEffect::Deliver && robot.frame().to.place == RobotPlace::Outbox,
+    "outbox must move to the output belt"
+  );
+  check(
+    robot.display_state(session.machine().state()).output.empty(),
+    "output must wait for placement"
+  );
+  robot.finish();
+  start();
+  check(
+    robot.frame().effect == RobotEffect::Jump && robot.frame().from.place == RobotPlace::Outbox &&
+      robot.frame().to.place == RobotPlace::Outbox,
+    "jump must turn without teleporting the robot"
+  );
+  robot.finish();
+  robot.seek(level, session.machine().program(), 2);
+  check(
+    robot.frame().to.place == RobotPlace::Floor && robot.frame().to.floor == 0,
+    "rewind must reconstruct the previous physical location"
+  );
+  robot.seek(level, session.machine().program(), 1);
+  check(
+    robot.frame().to.place == RobotPlace::Inbox,
+    "rewind before a floor command must restore inbox position"
+  );
+  robot.reset();
+  check(
+    !robot.active() && robot.frame().to.place == RobotPlace::Home,
+    "reset must restore home pose"
+  );
+
+  hrm_app::Session fault(level, hrm_app::Editor({"outbox"}));
+  const auto before_fault = fault.machine().state();
+  const auto failure = fault.next();
+  robot.start(
+    hrm::decode_line("outbox").instruction,
+    failure,
+    before_fault,
+    fault.machine().state(),
+    1
+  );
+  check(
+    robot.frame().effect == RobotEffect::Fault && robot.frame().to.place == RobotPlace::Home,
+    "an invalid instruction must shake in place without reaching a destination"
+  );
+  robot.finish();
+  check(
+    !robot.start(
+      hrm::DecodedInstruction(),
+      fault.next(),
+      fault.machine().state(),
+      fault.machine().state(),
+      0
+    ),
+    "terminal no-op calls must not restart animations"
+  );
+
+  level.input.clear();
+  level.target.clear();
+  hrm_app::Session empty(level, hrm_app::Editor({"inbox"}));
+  const auto before_empty = empty.machine().state();
+  const auto ended = empty.next();
+  robot.reset();
+  robot
+    .start(hrm::decode_line("inbox").instruction, ended, before_empty, empty.machine().state(), 1);
+  check(
+    robot.frame().effect == RobotEffect::EmptyInbox && robot.frame().to.place == RobotPlace::Inbox,
+    "an empty inbox attempt must reach the belt and end without a pickup"
+  );
+  robot.advance(1, 12, false);
+  check(
+    !robot.active() &&
+      robot.display_state(empty.machine().state()).verdict == hrm::Verdict::Success,
+    "normal empty-inbox termination must settle to the actual verdict"
+  );
+
+  level.input = {3};
+  hrm_app::Session arithmetic(
+    level,
+    hrm_app::Editor({"inbox", "copyto 0", "copyfrom 0", "sub 0", "jumpifzero 1"})
+  );
+  robot.reset();
+  const hrm_app::RobotEffect expected[] = {RobotEffect::Pickup,
+    RobotEffect::Store,
+    RobotEffect::Copy,
+    RobotEffect::Subtract,
+    RobotEffect::Jump};
+  for (const auto effect : expected) {
+    const auto before = arithmetic.machine().state();
+    const auto command =
+      hrm::decode_line(arithmetic.machine().program().instructions[before.pc].text);
+    const auto result = arithmetic.next();
+    robot.start(command.instruction, result, before, arithmetic.machine().state(), 1);
+    check(
+      robot.frame().effect == effect,
+      "copy, subtraction, and zero-branch effects must match their commands"
+    );
+    robot.finish();
+  }
+  hrm_app::Session nonzero(level, hrm_app::Editor({"inbox", "jumpifzero 1"}));
+  nonzero.next();
+  const auto before_branch = nonzero.machine().state();
+  const auto branch = nonzero.next();
+  robot.start(
+    hrm::decode_line("jumpifzero 1").instruction,
+    branch,
+    before_branch,
+    nonzero.machine().state(),
+    1
+  );
+  check(
+    robot.frame().effect == RobotEffect::Continue,
+    "nonzero conditional jumps must use a continue gesture"
+  );
+}
+
 /// Compare YAML levels with OJ data and reject malformed game configurations.
 void config_tests() {
   const auto game = hrm_app::load_config("assets/game.yaml");
@@ -222,6 +422,64 @@ void config_tests() {
   std::filesystem::remove(test_path);
 }
 
+/// Verify successful-only persistence, jump round trips, stale levels, and damaged saves.
+void solution_tests() {
+  const auto directory = std::filesystem::path("build/tests/solutions");
+  std::filesystem::remove_all(directory);
+  hrm_app::SolutionStore store(directory);
+  hrm::LevelDefinition level;
+  hrm::load_builtin_level(1, level);
+  level.allowed_opcodes.set(static_cast<std::size_t>(hrm::Opcode::Jump));
+  check(!store.load(level), "a missing save must not mark a level completed");
+  hrm_app::Session session(level, hrm_app::Editor({"inbox", "outbox", "jump 1"}));
+  bool rejected = false;
+  try {
+    store.save(session.machine());
+  } catch (const std::exception &) {
+    rejected = true;
+  }
+  check(rejected && !std::filesystem::exists(directory), "unsolved drafts must not be saved");
+  for (int i = 0; i < 10 && session.machine().state().status == hrm::ExecutionStatus::Running;
+    ++i) {
+    session.next();
+  }
+  store.save(session.machine());
+  const auto loaded = store.load(level);
+  check(
+    loaded && *loaded == std::vector<std::string>{"inbox", "outbox", "jump 1"},
+    "saved instructions and numeric jump destinations must survive restart"
+  );
+  hrm_app::Session restored(level, hrm_app::Editor(*loaded));
+  check(restored.machine().state().attempted == 0, "loaded solutions must start at step zero");
+  auto changed = level;
+  changed.input.push_back(42);
+  check(!store.load(changed), "changed level data must invalidate old completion");
+  const auto path = directory / "level-1.yaml";
+  std::ifstream input(path);
+  std::string body((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+  input.close();
+  body.replace(body.find("outbox"), 6, "jump 1");
+  std::ofstream(path) << body;
+  rejected = false;
+  try {
+    store.load(level);
+  } catch (const std::exception &) {
+    rejected = true;
+  }
+  check(rejected, "a tampered nonterminating solution must fail bounded replay");
+  store.save(session.machine());
+  check(store.load(level).has_value(), "a new successful run must replace damaged progress");
+  std::ofstream(path) << "version: [broken";
+  rejected = false;
+  try {
+    store.load(level);
+  } catch (const std::exception &) {
+    rejected = true;
+  }
+  check(rejected, "corrupt YAML must report a recoverable load failure");
+  std::filesystem::remove_all(directory);
+}
+
 } // namespace
 
 /// Run application regressions and report the first failing invariant.
@@ -230,8 +488,10 @@ int main() {
     editor_tests();
     drop_tests();
     playback_tests();
+    animation_tests();
     config_tests();
-    std::cout << "Editor, playback, and YAML tests passed\n";
+    solution_tests();
+    std::cout << "Editor, playback, YAML, robot animation, and saved solution tests passed\n";
   } catch (const std::exception &error) {
     std::cerr << error.what() << '\n';
     return 1;

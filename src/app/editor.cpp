@@ -269,8 +269,8 @@ void Session::reset() {
   machine_ = std::make_unique<hrm::Machine>(level_, compiled_.program);
 }
 
-void Session::next() {
-  machine_->step();
+hrm::StepResult Session::next() {
+  return machine_->step();
 }
 
 void Session::previous() {
