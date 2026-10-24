@@ -25,7 +25,7 @@ if has_config("tui") or has_config("gui") then
   add_requires("yaml-cpp 0.8.0")
 end
 
-if has_config("gui") then
+if has_config("tui") or has_config("gui") then
   add_requires("raylib 6.0")
 end
 
@@ -45,6 +45,32 @@ target("hrm-oj")
 target_end()
 
 if has_config("tui") or has_config("gui") then
+  target("hrm-audio-synth")
+    set_kind("static")
+    set_languages("c++20")
+    add_files("src/audio/synth.cpp")
+    add_headerfiles("include/(hrm_audio/synth.hpp)")
+    add_includedirs("include", {public = true})
+  target_end()
+
+  target("hrm-audio")
+    set_kind("static")
+    set_languages("c++20")
+    add_files("src/audio/audio.cpp")
+    add_headerfiles("include/(hrm_audio/audio.hpp)")
+    add_includedirs("include", {public = true})
+    add_deps("hrm-audio-synth")
+    add_packages("raylib")
+  target_end()
+
+  target("hrm-audio-tests")
+    set_kind("binary")
+    set_default(false)
+    set_languages("c++20")
+    add_files("tests/audio.cpp")
+    add_deps("hrm-audio")
+  target_end()
+
   target("hrm-app")
     set_kind("static")
     set_languages("c++20")
@@ -69,7 +95,7 @@ if has_config("tui") then
     set_kind("binary")
     set_languages("c++20")
     add_files("src/tui/*.cpp")
-    add_deps("hrm-app")
+    add_deps("hrm-app", "hrm-audio")
     add_packages("ftxui", {components = {"component"}})
     after_build(function (target)
       os.mkdir(path.join(target:targetdir(), "assets"))
@@ -83,7 +109,7 @@ if has_config("gui") then
     set_kind("binary")
     set_languages("c++20")
     add_files("src/gui/*.cpp")
-    add_deps("hrm-core")
+    add_deps("hrm-core", "hrm-audio")
     add_packages("raylib")
   target_end()
 end

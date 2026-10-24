@@ -2,6 +2,7 @@
 #include "hrm_app/level_config.hpp"
 #include "hrm_app/robot_animation.hpp"
 #include "hrm_app/solutions.hpp"
+#include "hrm_audio/audio.hpp"
 
 #include <ftxui/component/component.hpp>
 #include <ftxui/component/component_base.hpp>
@@ -192,8 +193,9 @@ public:
   ///
   /// @param config Validated level definitions and display metadata to own.
   /// @param initial_level Level ID selected at startup, validated by the caller.
-  explicit Application(hrm_app::GameConfig config, int initial_level)
-    : config_(std::move(config)) {
+  explicit Application(hrm_app::GameConfig config, int initial_level, bool audio_enabled = true)
+    : config_(std::move(config)),
+      audio_(audio_enabled) {
     for (std::size_t i = 0; i < config_.levels.size(); ++i) {
       const auto &level = config_.levels[i];
       level_names_.push_back(std::to_string(level.definition.id) + " / " + level.title);
@@ -232,6 +234,7 @@ public:
   ///
   /// @param now Monotonic UI-loop time used for playback and scroll deadlines.
   void tick(std::chrono::steady_clock::time_point now) {
+    audio_.update();
     const double elapsed = last_tick_.time_since_epoch().count() == 0
       ? 0.0
       : std::chrono::duration<double>(now - last_tick_).count();
@@ -266,14 +269,19 @@ public:
       }
     }
     const bool was_active = robot_.active();
+    const bool was_transferred = robot_.frame().transferred;
     if (robot_.advance(elapsed, speed_, animation_paused_) &&
       (now >= next_frame_ || !robot_.active())) {
       redraw_ = true;
       next_frame_ = now + std::chrono::milliseconds(16);
     }
+    if (was_active && !was_transferred && robot_.frame().transferred) {
+      transfer_sound();
+    }
     if (was_active && !robot_.active() &&
       session().machine().state().status != hrm::ExecutionStatus::Running) {
       playing_ = false;
+      settled_sound();
     }
     if (playing_ && !robot_.active()) {
       if (!start_step()) {
@@ -309,6 +317,56 @@ private:
     return robot_.display_state(session().machine().state());
   }
 
+  /// Play one instruction cue when its visual data-transfer phase is crossed.
+  void transfer_sound() {
+    using hrm_app::RobotEffect;
+    using hrm_audio::Cue;
+    Cue cue = Cue::Count;
+    switch (robot_.frame().effect) {
+    case RobotEffect::Pickup:
+      cue = Cue::Pickup;
+      break;
+    case RobotEffect::Deliver:
+      cue = Cue::Deliver;
+      break;
+    case RobotEffect::Store:
+      cue = Cue::Store;
+      break;
+    case RobotEffect::Copy:
+      cue = Cue::Copy;
+      break;
+    case RobotEffect::Add:
+      cue = Cue::Add;
+      break;
+    case RobotEffect::Subtract:
+      cue = Cue::Subtract;
+      break;
+    case RobotEffect::Jump:
+      cue = Cue::Jump;
+      break;
+    case RobotEffect::EmptyInbox:
+      cue = Cue::EmptyInbox;
+      break;
+    default:
+      break;
+    }
+    const auto place = robot_.frame().to.place;
+    const float pan = place == hrm_app::RobotPlace::Inbox ? -0.6f
+      : place == hrm_app::RobotPlace::Outbox              ? 0.6f
+                                                          : 0.0f;
+    audio_.play(cue, pan);
+  }
+
+  /// Sound a final verdict once its animation has settled, including manual fast-forward.
+  void settled_sound() {
+    const auto verdict = session().machine().state().verdict;
+    if (verdict == hrm::Verdict::Success || verdict == hrm::Verdict::Fail) {
+      audio_.play(
+        verdict == hrm::Verdict::Success ? hrm_audio::Cue::Success : hrm_audio::Cue::Error
+      );
+    }
+  }
+
   /// Commit one kernel attempt and capture its before/after states for visual playback.
   bool start_step() {
     if (session().machine().state().status != hrm::ExecutionStatus::Running) {
@@ -319,6 +377,9 @@ private:
     const auto instruction =
       hrm::decode_line(session().machine().program().instructions[before.pc].text);
     const auto result = session().next();
+    if (result.outcome == hrm::StepOutcome::Faulted) {
+      audio_.play(hrm_audio::Cue::Error);
+    }
     if (session().machine().state().verdict == hrm::Verdict::Success) {
       try {
         solution_store_.save(session().machine());
@@ -470,7 +531,9 @@ private:
     operand_text_ = row && !row->landing && hrm_app::uses_floor(row->opcode) ? row->operand : "0";
   }
   /// Pause playback, leave link mode, and rebuild the machine after an editor mutation.
-  void edited() {
+  void edited(hrm_audio::Cue cue = hrm_audio::Cue::Insert) {
+    audio_.stop_effects();
+    audio_.play(cue);
     playing_ = false;
     linking_ = 0;
     session().reset();
@@ -499,7 +562,7 @@ private:
     const auto &remaining = session().editor().rows();
     select(remaining[std::min(index, remaining.size() - 1)].id);
     linking_ = 0;
-    edited();
+    edited(hrm_audio::Cue::Remove);
     message_ = "Card removed. Jumps to a deleted landing card need a new link.";
   }
   /// Move editor selection by a bounded row offset.
@@ -543,11 +606,20 @@ private:
   /// Pause and attempt the next kernel instruction.
   void next() {
     playing_ = false;
+    const bool active = robot_.active();
+    const bool transferred = robot_.frame().transferred;
     robot_.finish();
+    if (active) {
+      if (!transferred) {
+        transfer_sound();
+      }
+      settled_sound();
+    }
     start_step();
   }
   /// Pause and replay to the state preceding the last instruction attempt.
   void previous() {
+    audio_.stop_effects();
     playing_ = false;
     session().previous();
     robot_.seek(
@@ -559,6 +631,8 @@ private:
   }
   /// Pause and clear execution state while retaining the player's edited program.
   void reset() {
+    audio_.stop_effects();
+    audio_.play(hrm_audio::Cue::Reset);
     playing_ = false;
     session().reset();
     robot_.reset();
@@ -568,6 +642,7 @@ private:
   /// Toggle playback, restarting a terminal program before playing again.
   void toggle() {
     if (playing_) {
+      audio_.stop_effects();
       playing_ = false;
       animation_paused_ = true;
       return;
@@ -612,6 +687,8 @@ private:
       picker_message_ = "This level has no saved solution.";
       return;
     }
+    audio_.stop_effects();
+    audio_.play(hrm_audio::Cue::Select);
     if (load_saved) {
       sessions_[index] = std::make_unique<hrm_app::Session>(
         config_.levels[index].definition,
@@ -639,6 +716,7 @@ private:
 
   /// Suspend playback while choosing a level, preserving drafts and physical state.
   void open_levels() {
+    audio_.stop_effects();
     playing_ = false;
     animation_paused_ = true;
     drag_.reset();
@@ -758,6 +836,15 @@ private:
           !event.is_cursor_shape();
       if (interaction && screen_index_ == 0) {
         mascot_interacted_ = true;
+      }
+      if ((screen_index_ == 1 || !operand_input_->Focused()) &&
+        (event == Event::Character('m') || event == Event::Character('n'))) {
+        if (event == Event::Character('m')) {
+          audio_.set_music(!audio_.music_enabled());
+        } else {
+          audio_.set_effects(!audio_.effects_enabled());
+        }
+        return true;
       }
       if (event == Event::Character('/')) {
         open_levels();
@@ -931,12 +1018,12 @@ private:
     }
     return vbox(
              {text(output ? "OUTBOX" : "INBOX") | bold | color(output ? blue : teal) | center,
-               text(std::to_string(values.size() - begin) + (output ? " sent" : " remaining")) |
+               text(std::to_string(values.size() - begin) + (output ? " sent" : " left")) |
                  color(muted) | center,
                text("▼  ▼  ▼") | color(outline) | center,
                vbox(std::move(blocks)) | yframe | flex}
            ) |
-      size(WIDTH, EQUAL, 13);
+      size(WIDTH, EQUAL, 11);
   }
 
   /// Draw command-driven walking, reaching, transfers, and floor interactions on a cell canvas.
@@ -1264,7 +1351,8 @@ private:
                    color(amber),
                  hbox({open_level_->Render(), text(" "), load_solution_->Render()}),
                  paragraph(picker_message_) | color(red),
-                 text("↑/↓ choose · Enter open/resume · L load solution · Esc back · Q quit")}
+                 text("↑/↓ choose · Enter open/resume · L load solution · Esc back · Q quit"),
+                 text(audio_status()) | color(muted)}
              ) |
         size(WIDTH, EQUAL, std::max(1, std::min(84, width - 4))) | borderRounded | center |
         color(ink) | bgcolor(background);
@@ -1348,7 +1436,8 @@ private:
                             text(std::to_string(speed_) + " steps/s ") | color(muted)}
                         ),
                         playback,
-                        text(" Space play/pause · ←/→ step · R reset") | color(muted)}
+                        text(" Space play/pause · ←/→ step · R reset") | color(muted),
+                        text(" " + audio_status()) | color(muted)}
                     ) |
       size(WIDTH, EQUAL, workroom_width);
     auto commands =
@@ -1386,7 +1475,17 @@ private:
     return with_drag_preview(view, width, height);
   }
 
+  /// Summarize shared music/effect controls without claiming unavailable device playback.
+  std::string audio_status() const {
+    if (!audio_.ready()) {
+      return "Audio unavailable / disabled";
+    }
+    return std::string("M music: ") + (audio_.music_enabled() ? "on" : "off") +
+      " · N SFX: " + (audio_.effects_enabled() ? "on" : "off");
+  }
+
   hrm_app::GameConfig config_;
+  hrm_audio::Audio audio_;
   hrm_app::SolutionStore solution_store_{hrm_app::solution_directory()};
   std::vector<std::optional<std::vector<std::string>>> solutions_;
   std::vector<std::unique_ptr<hrm_app::Session>> sessions_;
@@ -1444,16 +1543,20 @@ int main(int argc, char **argv) {
   try {
     auto config = default_config(argv[0]);
     int level = 1, width = 140, height = 44;
-    bool preview = false;
+    bool preview = false, audio_enabled = true;
     for (int i = 1; i < argc; ++i) {
       const std::string argument = argv[i];
       if (argument == "--help") {
         std::cout << "Usage: hrm-tui [--config game.yaml] [--level ID] [--preview] [--width N] "
-                     "[--height N]\n";
+                     "[--height N] [--no-audio]\n";
         return 0;
       }
       if (argument == "--preview") {
         preview = true;
+        continue;
+      }
+      if (argument == "--no-audio") {
+        audio_enabled = false;
         continue;
       }
       if (i + 1 >= argc) {
@@ -1484,7 +1587,7 @@ int main(int argc, char **argv) {
         })) {
       throw std::runtime_error("level not found in configuration: " + std::to_string(level));
     }
-    Application application(std::move(game), level);
+    Application application(std::move(game), level, audio_enabled && !preview);
     if (preview) {
       application.set_preview_size(width, height);
       auto screen = Screen::Create(Dimension::Fixed(width), Dimension::Fixed(height));

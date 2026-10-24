@@ -40,7 +40,7 @@ class Terminal:
             "-c",
             str(ROOT),
             f"env COLORTERM=truecolor XDG_CONFIG_HOME={shlex.quote(str(self.config))} "
-            f"{shlex.quote(str(self.binary))} --level {level}",
+            f"{shlex.quote(str(self.binary))} --level {level} --no-audio",
         )
         self.wait_for("CHOOSE A LEVEL")
         if enter:
@@ -363,7 +363,7 @@ class DragTests(unittest.TestCase):
             (line.index("▐"), y) for y, line in enumerate(ui.screen().splitlines()) if "▐" in line
         )
         self.assertEqual(before, after)
-        self.assertIn("8 remaining", ui.screen())
+        self.assertIn("8 left", ui.screen())
         self.assertIn("HAND: empty", ui.screen())
         self.assertIn("▐▛███▛█", ui.screen())
         self.assertIn("▝▜██████▀", ui.screen())
@@ -416,7 +416,7 @@ class DragTests(unittest.TestCase):
         ui.keys("r")
         self.assertEqual(position(), home)
         self.assertIn("steps 0", ui.screen())
-        self.assertIn("8 remaining", ui.screen())
+        self.assertIn("8 left", ui.screen())
         self.assertIn("HAND: empty", ui.screen())
         ui.keys("Space")
         ui.wait_for("FAIL", timeout=7)

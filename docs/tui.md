@@ -3,6 +3,9 @@
 Run `just tui` (or `xmake run hrm-tui`). The terminal must be at least 112 columns
 by 32 rows; 140 by 48 or larger gives the command stack more room. Mouse input
 is supported alongside keyboard navigation.
+The shared procedural 8-bit soundtrack starts automatically. **M** toggles
+music and **N** toggles sound effects; `--no-audio` disables audio initialization.
+See [audio.md](audio.md) for synthesis, timing, and audition controls.
 
 Text, borders, and card backgrounds inherit the terminal's default foreground
 and background. Highlights use its ANSI cyan, yellow, blue, and red palette

@@ -29,3 +29,13 @@ test-tui:
 test-tui-drag:
   xmake build hrm-tui
   python tests/tui-drag.py
+
+# Validate procedural audio without opening a device, and export previews for listening.
+test-audio:
+  xmake build hrm-audio-tests
+  xmake run hrm-audio-tests build/audio-preview
+
+# Run the graphical sound-room preview using the same audio module as the TUI.
+gui:
+  xmake build hrm-gui
+  xmake run hrm-gui
