@@ -77,7 +77,7 @@ public:
   void set_operand(RowId id, std::string operand);
   /// Link a jump to an empty landing card before the selected destination.
   ///
-  /// @param jump Source jump or jumpifzero command ID.
+  /// @param jump Source unconditional or conditional jump command ID.
   /// @param destination Existing command or landing row ID.
   /// @return The stable landing ID, or zero when either endpoint is invalid.
   RowId set_target(RowId jump, RowId destination);

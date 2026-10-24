@@ -30,3 +30,27 @@ levels:
     target: [7, -3]
     floor_size: 3
     instructions: [inbox, outbox, copyfrom, copyto, add, sub, jump, jumpifzero]
+
+  - id: 4
+    title: Triple it
+    description: >-
+      Multiply every number from INBOX by 3 and send the result to OUTBOX,
+      keeping the original order. One floor slot is available for temporary
+      storage.
+    input: [2, -3, 0, 5, -1, 7]
+    target: [6, -9, 0, 15, -3, 21]
+    floor_size: 1
+    instructions: [inbox, outbox, copyfrom, copyto, add, sub, jump, jumpifzero]
+
+  - id: 5
+    title: Same sign
+    description: >-
+      Take two nonzero numbers at a time. Output 0 when both are positive or
+      both are negative; output 1 when their signs differ. Repeat until INBOX
+      is empty. Six floor slots are available: slot 4 starts with 0 and slot 5
+      starts with 1.
+    input: [5, 9, -4, -8, 7, -3, -6, 2, 1, 1, -1, -1]
+    target: [0, 0, 1, 1, 0, 0]
+    floor_size: 6
+    initial_floor: {4: 0, 5: 1}
+    instructions: [inbox, outbox, copyfrom, copyto, add, sub, jump, jumpifzero, jumpifnegative]

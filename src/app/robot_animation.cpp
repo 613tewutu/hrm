@@ -69,6 +69,9 @@ bool RobotAnimation::start(
   case hrm::Opcode::JumpIfZero:
     frame_.effect = before.hand.value == 0 ? RobotEffect::Jump : RobotEffect::Continue;
     break;
+  case hrm::Opcode::JumpIfNegative:
+    frame_.effect = before.hand.value < 0 ? RobotEffect::Jump : RobotEffect::Continue;
+    break;
   }
   return true;
 }

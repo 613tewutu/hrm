@@ -68,7 +68,7 @@ Landing cards are editor objects rather than executable instructions. A jump
 resolves to the first command below its landing card. Inserting or deleting
 commands rebases the compiled target automatically. Inserting directly below a
 landing card makes the new command its destination. An unlinked jump, or a
-landing card with no command below it, becomes `jump 0` (or `jumpifzero 0`), so
+landing card with no command below it, becomes a jump to target 0, so
 the existing kernel reports an error only if execution reaches that command.
 
 Deleting a landing card disconnects its incoming jumps. Landing cards with no
@@ -106,7 +106,7 @@ gestures follow playback speed.
 | `copyto X` | Approach floor X and place a moving copy, retaining the held value. |
 | `copyfrom X` | Approach floor X and lift a copy; the floor block remains. |
 | `add X` / `sub X` | Approach floor X, lean/reach, and show the operand and resulting hand value. |
-| `jump` / `jumpifzero` | Hop in place when taken; a nonzero conditional taps a foot. Control-flow changes do not teleport the robot. |
+| `jump` / `jumpifzero` / `jumpifnegative` | Hop in place when taken; an untaken conditional taps a foot. Control-flow changes do not teleport the robot. |
 | Runtime error | Stay in place and turn red; no pickup or placement occurs. |
 
 Motion uses the existing speed slider. Pause freezes the pose and resumes from
@@ -141,8 +141,10 @@ timing runs on the UI thread with no background mutations of the kernel.
 
 ## YAML configuration
 
-`assets/game.yaml` contains the three assignment levels. Every level opens with
-an empty command editor. The supplied YAML level data is tested against the OJ built-in data.
+`assets/game.yaml` contains the three assignment levels, **Triple it** (level 4),
+and **Same sign** (level 5).
+Every level opens with an empty command editor. The first three levels are
+tested against the OJ built-in data; additional game levels live in YAML.
 The build copies the configuration beside the executable under `assets/`, so
 the TUI can also start outside the repository. A working-directory
 `assets/game.yaml` takes precedence; `--config PATH` selects a file explicitly.
@@ -164,6 +166,29 @@ IDs must be positive and unique. Numeric values must be signed 64-bit integers;
 floor size must be between 0 and 1024. Available instruction names are validated
 on load. Players build their programs in the command editor and create landing
 cards by linking jumps.
+An optional `initial_floor` map preloads occupied cells, including zero:
+
+```yaml
+floor_size: 6
+initial_floor: {4: 0, 5: 1}
+```
+
+Unspecified slots start empty. Slots remain writable, and Reset and rewind
+restore the configured initial values. Presets are part of saved-solution
+verification, so changing a constant invalidates older completion data.
+**Triple it** multiplies each input by 3 using one working slot, covering positive,
+negative, and zero inputs. It uses the existing course instruction set.
+**Same sign** consumes pairs of nonzero inputs and outputs 0 for two positive
+or two negative values, and 1 for opposite signs. Its input covers all four
+sign combinations; slots 4 and 5 initially contain 0 and 1.
+Level 5 introduces `jumpifnegative N`: jump to instruction N when the hand holds
+a negative value, otherwise continue. It retains the held value, requires a
+nonempty hand, and validates the destination even when the jump is not taken.
+The new instruction supports the same landing cards, drag operations, target
+rebasing, and playback animation as other jumps. Future YAML levels can opt in
+by listing `jumpifnegative` under `instructions`. OJ levels 1–3 keep their original
+permissions and reject this extension. Existing saves for unchanged levels keep
+their previous instruction-permission identity.
 YAML loading lives in the C++20 application library; the C++11 kernel and
 single-file OJ submission do not depend on YAML or FTXUI.
 

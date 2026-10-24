@@ -10,12 +10,13 @@ namespace hrm_app {
 
 const char *opcode_name(hrm::Opcode opcode) {
   const char *names[] =
-    {"inbox", "outbox", "add", "sub", "copyto", "copyfrom", "jump", "jumpifzero"};
+    {"inbox", "outbox", "add", "sub", "copyto", "copyfrom", "jump", "jumpifzero", "jumpifnegative"};
   return names[static_cast<std::size_t>(opcode)];
 }
 
 bool is_jump(hrm::Opcode opcode) {
-  return opcode == hrm::Opcode::Jump || opcode == hrm::Opcode::JumpIfZero;
+  return opcode == hrm::Opcode::Jump || opcode == hrm::Opcode::JumpIfZero ||
+    opcode == hrm::Opcode::JumpIfNegative;
 }
 
 bool uses_floor(hrm::Opcode opcode) {

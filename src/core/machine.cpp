@@ -55,6 +55,7 @@ const Program &Machine::program() const {
 
 void Machine::reset() {
   state_ = MachineState();
+  state_.floor = level_.initial_floor;
   state_.floor.resize(level_.floor_size);
   cache_.assign(program_.instructions.size(), CachedInstruction());
   if (program_.instructions.empty()) {
@@ -103,7 +104,8 @@ StepResult Machine::step() {
 
   const bool uses_floor = opcode == Opcode::Add || opcode == Opcode::Sub ||
     opcode == Opcode::CopyTo || opcode == Opcode::CopyFrom;
-  const bool jumps = opcode == Opcode::Jump || opcode == Opcode::JumpIfZero;
+  const bool jumps =
+    opcode == Opcode::Jump || opcode == Opcode::JumpIfZero || opcode == Opcode::JumpIfNegative;
   if (uses_floor && !valid_index(instruction.operand, state_.floor.size())) {
     return fault(result, ErrorCode::InvalidFloorIndex);
   }
@@ -113,7 +115,8 @@ StepResult Machine::step() {
     return fault(result, ErrorCode::InvalidJumpTarget);
   }
   const bool needs_hand = opcode == Opcode::Outbox || opcode == Opcode::Add ||
-    opcode == Opcode::Sub || opcode == Opcode::CopyTo || opcode == Opcode::JumpIfZero;
+    opcode == Opcode::Sub || opcode == Opcode::CopyTo || opcode == Opcode::JumpIfZero ||
+    opcode == Opcode::JumpIfNegative;
   if (needs_hand && !state_.hand.occupied) {
     return fault(result, ErrorCode::EmptyHand);
   }
@@ -161,6 +164,11 @@ StepResult Machine::step() {
     break;
   case Opcode::JumpIfZero:
     if (state_.hand.value == 0) {
+      next_pc = static_cast<std::size_t>(instruction.operand - 1);
+    }
+    break;
+  case Opcode::JumpIfNegative:
+    if (state_.hand.value < 0) {
       next_pc = static_cast<std::size_t>(instruction.operand - 1);
     }
     break;

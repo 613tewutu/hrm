@@ -12,8 +12,20 @@ namespace {
 /// Serialize execution-relevant data so changed YAML levels cannot reuse stale completion.
 std::string level_identity(const hrm::LevelDefinition &level) {
   YAML::Emitter output;
+  auto permissions = level.allowed_opcodes.to_string();
+  if (!level.allowed_opcodes.test(static_cast<std::size_t>(hrm::Opcode::JumpIfNegative))) {
+    permissions.erase(0, 1); // Preserve identities of saves from the eight-instruction core.
+  }
   output << YAML::BeginSeq << level.id << level.input << level.target << level.floor_size
-         << level.allowed_opcodes.to_string() << YAML::EndSeq;
+         << permissions;
+  if (!level.initial_floor.empty()) {
+    output << YAML::BeginSeq;
+    for (const auto &cell : level.initial_floor) {
+      output << YAML::BeginSeq << cell.occupied << cell.value << YAML::EndSeq;
+    }
+    output << YAML::EndSeq;
+  }
+  output << YAML::EndSeq;
   return output.c_str();
 }
 

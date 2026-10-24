@@ -88,15 +88,23 @@ void decoder_tests() {
   CHECK(hrm::parse_integer("-9223372036854775809").error == ErrorCode::OperandOutOfRange);
   CHECK(hrm::parse_integer(std::string(200, '9')).error == ErrorCode::OperandOutOfRange);
 
-  const char *valid[] =
-    {"inbox", "outbox", "add 0", "sub -1", "copyto +1", "copyfrom 2", "jump 1", "jumpifzero 2"};
-  for (std::size_t i = 0; i < 8; ++i) {
+  const char *valid[] = {"inbox",
+    "outbox",
+    "add 0",
+    "sub -1",
+    "copyto +1",
+    "copyfrom 2",
+    "jump 1",
+    "jumpifzero 2",
+    "jumpifnegative 2"};
+  for (std::size_t i = 0; i < hrm::opcode_count; ++i) {
     const hrm::DecodeResult result = hrm::decode_line(valid[i]);
     CHECK(result.error == ErrorCode::None);
     CHECK(static_cast<std::size_t>(result.instruction.opcode) == i);
   }
   CHECK(hrm::decode_line(" \tcopyto\t+0 \r").error == ErrorCode::None);
-  for (const char *line : {"inbox 1", "outbox 1", "add", "jump", "sub 1 2"}) {
+  for (const char *line :
+    {"inbox 1", "outbox 1", "add", "jump", "sub 1 2", "jumpifnegative", "jumpifnegative 1 2"}) {
     CHECK(hrm::decode_line(line).error == ErrorCode::WrongOperandCount);
   }
   for (const char *line : {"", "INBOX", "unknown", "# comment"}) {
@@ -352,6 +360,41 @@ void overflow_tests() {
   CHECK(boundary.state().verdict == hrm::Verdict::Success);
 }
 
+/// Verify signed branching, hand preservation, validation, and unchanged OJ permissions.
+void negative_jump_tests() {
+  for (const auto value : std::vector<hrm::Value>{std::numeric_limits<hrm::Value>::min(),
+         -1,
+         0,
+         1,
+         std::numeric_limits<hrm::Value>::max()}) {
+    auto level = custom({}, {});
+    level.input.push_back(value);
+    if (value < 0) {
+      level.target.push_back(value);
+    }
+    hrm::Machine machine(
+      level,
+      program({"inbox", "jumpifnegative 4", "jump 5", "outbox", "inbox"})
+    );
+    machine.step();
+    machine.step();
+    CHECK(machine.state().pc == (value < 0 ? 3u : 2u));
+    CHECK(machine.state().hand.occupied && machine.state().hand.value == value);
+    finish(machine);
+    CHECK(machine.state().verdict == hrm::Verdict::Success);
+  }
+  expect_fault(custom({}, {}), program({"jumpifnegative 1"}), hrm::ErrorCode::EmptyHand, 1);
+  expect_fault(
+    custom({1}, {}),
+    program({"inbox", "jumpifnegative 0"}),
+    hrm::ErrorCode::InvalidJumpTarget,
+    2
+  );
+  for (int id = 1; id <= 3; ++id) {
+    expect_fault(builtin(id), program({"jumpifnegative 1"}), hrm::ErrorCode::OpcodeNotAllowed, 1);
+  }
+}
+
 } // namespace
 
 /// Run kernel regressions and report the first failing invariant.
@@ -364,6 +407,7 @@ int main() {
     reachability_tests();
     termination_tests();
     overflow_tests();
+    negative_jump_tests();
     std::cout << "Kernel tests passed\n";
   } catch (const std::exception &error) {
     std::cerr << error.what() << '\n';

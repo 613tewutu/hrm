@@ -20,7 +20,9 @@ struct Cell {
   }
 };
 
-enum class Opcode { Inbox, Outbox, Add, Sub, CopyTo, CopyFrom, Jump, JumpIfZero };
+enum class Opcode { Inbox, Outbox, Add, Sub, CopyTo, CopyFrom, Jump, JumpIfZero, JumpIfNegative };
+
+constexpr std::size_t opcode_count = 9;
 
 enum class ErrorCode {
   None,

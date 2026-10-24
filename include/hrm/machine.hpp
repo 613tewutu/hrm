@@ -50,7 +50,7 @@ public:
   const LevelDefinition &level() const;
   /// Return the owned original program.
   const Program &program() const;
-  /// Restart the same program with empty hand, floor, output, counters, and decode cache.
+  /// Restart the program with preset floor cells and empty hand, output, counters, and cache.
   void reset();
 
 private:

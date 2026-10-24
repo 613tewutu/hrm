@@ -11,7 +11,9 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-COMMAND = re.compile(r"│[▶ ]*(\d+)\s+(inbox|outbox|add|sub|copyto|copyfrom|jumpifzero|jump)\b")
+COMMAND = re.compile(
+    r"│[▶ ]*(\d+)\s+(inbox|outbox|add|sub|copyto|copyfrom|jumpifnegative|jumpifzero|jump)\b"
+)
 
 
 class Terminal:
@@ -192,6 +194,27 @@ class DragTests(unittest.TestCase):
         self.assertIn("steps 0", ui.screen())
         ui.keys("Space")
         ui.wait_for("SUCCESS", timeout=5)
+
+    def test_negative_jump_palette(self) -> None:
+        """Restrict negative jumps to later levels and support dragging/linking their cards."""
+        ui = self.terminal
+        self.assertNotIn("│ jumpifnegative │", ui.screen())
+        ui.keys("/", "Down", "Down", "Down", "Enter")
+        ui.wait_for("Same sign")
+        ui.wait_for("│ jumpifnegative │")
+        ui.click_palette("inbox")
+        ui.drag_palette("jumpifnegative", ui.locate("Drop commands here"))
+        ui.click_palette("outbox")
+        self.assertEqual(ui.commands(), ["inbox", "jumpifnegative", "outbox"])
+        x, y = ui.command_position(2)
+        ui.mouse(x, y, "press")
+        ui.mouse(x, y, "release")
+        ui.keys("t", "Down", "Enter")
+        ui.wait_for("LANDING")
+        self.assertEqual(ui.commands(), ["inbox", "jumpifnegative", "outbox"])
+        ui.keys("/", "Up", "Enter")
+        ui.wait_for("Triple it")
+        self.assertNotIn("│ jumpifnegative │", ui.screen())
 
     def test_insert_reorder_cancel(self) -> None:
         """Drop at the start/middle/end and preserve the program on cancellation."""

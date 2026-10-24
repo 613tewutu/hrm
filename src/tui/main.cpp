@@ -531,7 +531,7 @@ private:
   void link() {
     const auto *row = session().editor().find(selected_);
     if (!row || row->landing || !hrm_app::is_jump(row->opcode)) {
-      message_ = "Select a jump or jumpifzero command first.";
+      message_ = "Select an unconditional or conditional jump command first.";
       return;
     }
     playing_ = false;
@@ -682,8 +682,8 @@ private:
     stack_->remove = [&] {
       remove();
     };
-    Components first, second;
-    for (std::size_t i = 0; i < 8; ++i) {
+    Components first, second, third;
+    for (std::size_t i = 0; i < hrm::opcode_count; ++i) {
       const auto opcode = static_cast<hrm::Opcode>(i);
       auto button = action(hrm_app::opcode_name(opcode), [&, opcode] {
         add(opcode);
@@ -693,10 +693,15 @@ private:
       button = Maybe(button, [&, i] {
         return session().machine().level().allowed_opcodes.test(i);
       });
-      (i < 4 ? first : second).push_back(button);
+      (i < 4 ? first : i < 8 ? second : third).push_back(button);
     }
     palette_first_ = Container::Horizontal(std::move(first));
     palette_second_ = Container::Horizontal(std::move(second));
+    palette_third_ = Maybe(Container::Horizontal(std::move(third)), [&] {
+      return session().machine().level().allowed_opcodes.test(
+        static_cast<std::size_t>(hrm::Opcode::JumpIfNegative)
+      );
+    });
     auto input_options = InputOption::Default();
     input_options.multiline = false;
     input_options.on_enter = [&] {
@@ -734,8 +739,9 @@ private:
     slider_options.color_inactive = outline;
     speed_slider_ = Slider(slider_options);
     transport_ = Container::Horizontal({clear, back, play, forward, speed_slider_});
-    auto hierarchy =
-      Container::Vertical({palette_first_, palette_second_, stack_, edit_controls_, transport_});
+    auto hierarchy = Container::Vertical(
+      {palette_first_, palette_second_, palette_third_, stack_, edit_controls_, transport_}
+    );
     auto screens = Container::Tab({hierarchy, picker_controls_}, &screen_index_);
     root_ = Renderer(screens, [&] {
       return draw();
@@ -1362,6 +1368,7 @@ private:
           ),
           palette_first_->Render(),
           palette_second_->Render(),
+          palette_third_->Render(),
           stack_->Render() | flex,
           hbox(
             {text("Floor ") | color(muted) | vcenter,
@@ -1402,11 +1409,11 @@ private:
   double mascot_time_ = 0.0;
   bool mascot_interacted_ = false;
   bool animation_paused_ = false;
-  std::array<Box, 8> palette_boxes_;
-  std::array<Component, 8> palette_buttons_;
+  std::array<Box, hrm::opcode_count> palette_boxes_;
+  std::array<Component, hrm::opcode_count> palette_buttons_;
   Component picker_controls_, open_level_, load_solution_;
-  Component root_, level_menu_, palette_first_, palette_second_, operand_input_, apply_, link_,
-    erase_, edit_controls_, transport_, speed_slider_;
+  Component root_, level_menu_, palette_first_, palette_second_, palette_third_, operand_input_,
+    apply_, link_, erase_, edit_controls_, transport_, speed_slider_;
   std::shared_ptr<CommandStack> stack_;
 };
 

@@ -14,7 +14,8 @@ struct LevelDefinition {
   std::vector<Value> input;
   std::vector<Value> target;
   std::size_t floor_size = 0;
-  std::bitset<8> allowed_opcodes;
+  std::vector<Cell> initial_floor; // Optional preset cells; omitted positions start empty.
+  std::bitset<opcode_count> allowed_opcodes;
 };
 
 /// Load one of the three built-in assignment levels.

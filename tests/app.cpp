@@ -81,6 +81,17 @@ void editor_tests() {
     forward.find(forward.find(forward.compile().instruction_rows[0])->target)->landing,
     "retargeting to a command must create or reuse a landing card"
   );
+  hrm_app::Editor negative({"inbox", "jumpifnegative 4", "inbox", "outbox"});
+  const auto negative_jump = negative.compile().instruction_rows[1];
+  check(
+    negative.find(negative.find(negative_jump)->target)->landing,
+    "negative jumps must import explicit landing cards"
+  );
+  negative.insert_command(negative.rows().front().id, hrm::Opcode::Inbox);
+  check(
+    negative.compile().program.instructions[2].text == "jumpifnegative 5",
+    "negative jump destinations must rebase with command insertion"
+  );
 }
 
 /// Verify insertion, reordering, stale destinations, and orphan-landing cleanup.
@@ -386,13 +397,32 @@ void animation_tests() {
     robot.frame().effect == RobotEffect::Continue,
     "nonzero conditional jumps must use a continue gesture"
   );
+  level.allowed_opcodes.set(static_cast<std::size_t>(hrm::Opcode::JumpIfNegative));
+  for (const auto value : {-1, 0, 1}) {
+    level.input = {value};
+    hrm_app::Session negative(level, hrm_app::Editor({"inbox", "jumpifnegative 1"}));
+    negative.next();
+    const auto before = negative.machine().state();
+    const auto result = negative.next();
+    robot.start(
+      hrm::decode_line("jumpifnegative 1").instruction,
+      result,
+      before,
+      negative.machine().state(),
+      1
+    );
+    check(
+      robot.frame().effect == (value < 0 ? RobotEffect::Jump : RobotEffect::Continue),
+      "negative jump animation must follow the sign of the held value"
+    );
+  }
 }
 
 /// Compare YAML levels with OJ data and reject malformed game configurations.
 void config_tests() {
   const auto game = hrm_app::load_config("assets/game.yaml");
-  check(game.levels.size() == 3, "YAML levels missing");
-  for (std::size_t i = 0; i < game.levels.size(); ++i) {
+  check(game.levels.size() == 5, "YAML levels missing");
+  for (std::size_t i = 0; i < 3; ++i) {
     hrm::LevelDefinition builtin;
     hrm::load_builtin_level(static_cast<int>(i + 1), builtin);
     const auto &yaml = game.levels[i].definition;
@@ -402,6 +432,135 @@ void config_tests() {
       "YAML and OJ levels disagree"
     );
   }
+  const auto &triple_level = game.levels[3].definition;
+  check(
+    triple_level.id == 4 && triple_level.floor_size == 1 &&
+      !triple_level.allowed_opcodes.test(static_cast<std::size_t>(hrm::Opcode::JumpIfNegative)),
+    "level 4 must triple inputs using the course instruction set"
+  );
+  hrm_app::Session triple(
+    triple_level,
+    hrm_app::Editor({"inbox", "copyto 0", "add 0", "add 0", "outbox", "jump 1"})
+  );
+  for (int i = 0; i < 100 && triple.machine().state().status == hrm::ExecutionStatus::Running;
+    ++i) {
+    triple.next();
+  }
+  check(
+    triple.machine().state().verdict == hrm::Verdict::Success,
+    "tripling level must be solvable"
+  );
+  const auto &sign_level = game.levels[4].definition;
+  check(
+    sign_level.id == 5 &&
+      sign_level.allowed_opcodes.test(static_cast<std::size_t>(hrm::Opcode::JumpIfNegative)),
+    "level 5 must introduce negative conditional jumps"
+  );
+  check(sign_level.floor_size == 6, "sign comparison needs six floor slots");
+  hrm_app::Session signs(
+    sign_level,
+    hrm_app::Editor(
+      {"inbox",
+        "copyto 0",
+        "copyto 1",
+        "copyfrom 0",
+        "sub 5",
+        "copyto 0",
+        "jumpifzero 13",
+        "copyfrom 1",
+        "add 5",
+        "copyto 1",
+        "jumpifzero 15",
+        "jump 4",
+        "copyfrom 4",
+        "jump 16",
+        "copyfrom 5",
+        "copyto 2",
+        "inbox",
+        "copyto 0",
+        "copyto 1",
+        "copyfrom 0",
+        "sub 5",
+        "copyto 0",
+        "jumpifzero 29",
+        "copyfrom 1",
+        "add 5",
+        "copyto 1",
+        "jumpifzero 31",
+        "jump 20",
+        "copyfrom 4",
+        "jump 32",
+        "copyfrom 5",
+        "sub 2",
+        "jumpifzero 36",
+        "copyfrom 5",
+        "jump 37",
+        "copyfrom 4",
+        "outbox",
+        "jump 1"}
+    )
+  );
+  check(
+    signs.machine().state().floor[4].occupied && signs.machine().state().floor[4].value == 0 &&
+      signs.machine().state().floor[5].occupied && signs.machine().state().floor[5].value == 1,
+    "initial constants must be occupied, including zero"
+  );
+  for (std::size_t i = 0; i < 4; ++i) {
+    check(!signs.machine().state().floor[i].occupied, "working floor cells must start empty");
+  }
+  for (int i = 0; i < 5000 && signs.machine().state().status == hrm::ExecutionStatus::Running;
+    ++i) {
+    signs.next();
+  }
+  check(signs.machine().state().verdict == hrm::Verdict::Success, "sign level must be solvable");
+  hrm_app::Session negative_signs(
+    sign_level,
+    hrm_app::Editor(
+      {"inbox",
+        "jumpifnegative 6",
+        "copyfrom 4",
+        "copyto 0",
+        "jump 9",
+        "copyfrom 5",
+        "copyto 0",
+        "jump 9",
+        "inbox",
+        "jumpifnegative 14",
+        "copyfrom 4",
+        "sub 0",
+        "jump 16",
+        "copyfrom 5",
+        "sub 0",
+        "jumpifzero 19",
+        "copyfrom 5",
+        "jump 20",
+        "copyfrom 4",
+        "outbox",
+        "jump 1"}
+    )
+  );
+  for (int i = 0;
+    i < 200 && negative_signs.machine().state().status == hrm::ExecutionStatus::Running;
+    ++i) {
+    negative_signs.next();
+  }
+  check(
+    negative_signs.machine().state().verdict == hrm::Verdict::Success,
+    "negative branches must solve every sign combination"
+  );
+  signs.reset();
+  signs.edit() = hrm_app::Editor({"copyfrom 5", "copyto 4"});
+  signs.reset();
+  signs.next();
+  signs.next();
+  check(signs.machine().state().floor[4].value == 1, "preset slots must remain writable");
+  signs.previous();
+  check(signs.machine().state().floor[4].value == 0, "rewind must replay from preset cells");
+  signs.reset();
+  check(
+    signs.machine().state().floor[4].value == 0 && signs.machine().state().floor[5].value == 1,
+    "reset must restore the original constants"
+  );
   const auto test_path = std::filesystem::path("build/tests/invalid-game.yaml");
   std::filesystem::create_directories(test_path.parent_path());
   for (const auto &body : {std::string("version: 2\ntitle: invalid\nlevels: []\n"),
@@ -419,6 +578,21 @@ void config_tests() {
     }
     check(rejected, "invalid YAML configuration must be rejected");
   }
+  for (const auto &initial : {"{6: 0}", "{-1: 0}", "{4: 1.5}", "{4: 0, 04: 1}", "[0, 1]"}) {
+    std::ofstream(
+      test_path
+    ) << "version: 1\ntitle: test\nlevels:\n - id: 1\n   title: test\n   description: test\n"
+         "   input: [1]\n   target: [1]\n   floor_size: 6\n   instructions: [inbox]\n"
+         "   initial_floor: "
+      << initial << '\n';
+    bool rejected = false;
+    try {
+      hrm_app::load_config(test_path);
+    } catch (const std::exception &) {
+      rejected = true;
+    }
+    check(rejected, "invalid preset floor data must be rejected");
+  }
   std::filesystem::remove(test_path);
 }
 
@@ -430,6 +604,8 @@ void solution_tests() {
   hrm::LevelDefinition level;
   hrm::load_builtin_level(1, level);
   level.allowed_opcodes.set(static_cast<std::size_t>(hrm::Opcode::Jump));
+  level.floor_size = 1;
+  level.initial_floor = {hrm::Cell(0)};
   check(!store.load(level), "a missing save must not mark a level completed");
   hrm_app::Session session(level, hrm_app::Editor({"inbox", "outbox", "jump 1"}));
   bool rejected = false;
@@ -454,6 +630,9 @@ void solution_tests() {
   auto changed = level;
   changed.input.push_back(42);
   check(!store.load(changed), "changed level data must invalidate old completion");
+  changed = level;
+  changed.initial_floor[0] = hrm::Cell(1);
+  check(!store.load(changed), "changed preset constants must invalidate old completion");
   const auto path = directory / "level-1.yaml";
   std::ifstream input(path);
   std::string body((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());

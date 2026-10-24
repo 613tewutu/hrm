@@ -66,6 +66,25 @@ GameConfig load_config(const std::filesystem::path &path) {
         "floor_size must be between 0 and 1024"
       );
       definition.floor_size = static_cast<std::size_t>(floor.value);
+      if (const auto initial = node["initial_floor"]) {
+        require(initial.IsMap(), "initial_floor must map floor indices to integer values");
+        std::set<std::size_t> initialized;
+        for (const auto &entry : initial) {
+          require(entry.first.IsScalar() && entry.second.IsScalar(), "invalid initial_floor cell");
+          const auto index = hrm::parse_integer(entry.first.Scalar());
+          const auto value = hrm::parse_integer(entry.second.Scalar());
+          require(
+            index.error == hrm::ErrorCode::None && index.value >= 0 &&
+              static_cast<std::uint64_t>(index.value) < definition.floor_size,
+            "initial_floor index must name an existing floor slot"
+          );
+          require(value.error == hrm::ErrorCode::None, "initial_floor values must be integers");
+          const auto slot = static_cast<std::size_t>(index.value);
+          require(initialized.insert(slot).second, "initial_floor indices must be unique");
+          definition.initial_floor.resize(definition.floor_size);
+          definition.initial_floor[slot] = hrm::Cell(value.value);
+        }
+      }
       const auto instructions = node["instructions"];
       require(
         instructions.IsSequence() && instructions.size() > 0,
