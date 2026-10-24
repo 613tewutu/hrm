@@ -91,13 +91,27 @@ class Terminal:
 
     def palette(self, name: str) -> tuple[int, int]:
         """Find a palette button independently of command-stack contents."""
-        return self.locate(f"│ {name} │")
+        pattern = re.compile(r"│ " + re.escape(name) + r"\s*│")
+        for y, line in enumerate(self.screen().splitlines()):
+            if match := pattern.search(line):
+                return match.start() + len(match.group()) // 2, y
+        raise AssertionError(f"Missing palette command {name!r}:\n{self.screen()}")
+
+    def configure(self, name: str) -> None:
+        """Complete default floor/landing picks for tests focused on other editor behavior."""
+        if name in {"copyto", "copyfrom", "add", "sub"} and "PICK FLOOR" in self.screen():
+            x, y = self.locate("[0]")
+            self.mouse(x, y, "press")
+            self.mouse(x, y, "release")
+        elif name in {"jump", "jumpifzero", "jumpifnegative"} and "PICK JUMP" in self.screen():
+            self.keys("Down", "Enter")
 
     def click_palette(self, name: str) -> None:
         """Use the click-to-insert fallback."""
         x, y = self.palette(name)
         self.mouse(x, y, "press")
         self.mouse(x, y, "release")
+        self.configure(name)
 
     def commands(self) -> list[str]:
         """Read visible instruction names in stack order."""
@@ -117,6 +131,7 @@ class Terminal:
         self.mouse(*destination, "move")
         self.wait_for("INSERT " + name)
         self.mouse(*destination, "release")
+        self.configure(name)
 
 
 class DragTests(unittest.TestCase):
@@ -166,6 +181,94 @@ class DragTests(unittest.TestCase):
         ui.keys("r")
         self.assertEqual(sprite_colors(), yellow)
 
+    def test_spatial_parameters_and_delete(self) -> None:
+        """Pick real floor cells, preview right-side jump routes, and drag commands out to delete."""
+        ui = self.terminal
+        palette_x, _ = ui.palette("copyto")
+        target = ui.locate("Drop commands here")
+        self.assertLess(palette_x, target[0])
+        ui.mouse(*ui.palette("copyto"), "press")
+        ui.mouse(*target, "move")
+        ui.mouse(*target, "release")
+        ui.wait_for("PICK FLOOR")
+        floor = ui.locate("[1]")
+        ui.mouse(*floor, "move")
+        self.assertIn("┏", ui.screen())
+        self.assertIn("┛", ui.screen())
+        ui.mouse(*floor, "press")
+        ui.mouse(*floor, "release")
+        self.assertRegex(ui.screen(), r"copyto\s+1")
+        self.assertNotIn("PICK FLOOR", ui.screen())
+        x, y = ui.command_position(1)
+        border = ui.screen().splitlines()[y - 1]
+        left = border.rfind("╭", 0, x + 1)
+        right = border.index("╮", left)
+        self.assertLessEqual(right - left + 1, 28)
+        ui.click_palette("inbox")
+        target = ui.locate("Drop commands here")
+        ui.mouse(*ui.palette("jump"), "press")
+        ui.mouse(*target, "move")
+        ui.mouse(*target, "release")
+        ui.wait_for("PICK JUMP")
+        first = ui.command_position(1)
+        ui.mouse(*first, "move")
+        route = [row[-9:] for row in ui.screen().splitlines()]
+        second = ui.command_position(2)
+        ui.mouse(*second, "move")
+        self.assertNotEqual([row[-9:] for row in ui.screen().splitlines()], route)
+        ui.mouse(*second, "press")
+        ui.mouse(*second, "release")
+        ui.wait_for("LANDING")
+        self.assertNotIn("PICK JUMP", ui.screen())
+        source = ui.command_position(1)
+        ui.mouse(*source, "press")
+        ui.mouse(20, 20, "move")
+        ui.wait_for("DELETE")
+        ui.mouse(20, 20, "release")
+        self.assertEqual(ui.commands(), ["inbox", "jump"])
+        ui.keys("Down", "Delete")
+        self.assertEqual(len(ui.commands()), 1)
+
+    def test_parameter_cancel_and_footer(self) -> None:
+        """Cancel incomplete insertions and scroll a single shortcut row on narrow workrooms."""
+        ui = self.terminal
+        footer = ui.screen().splitlines()[-1][:69]
+        self.assertIn("/ levels", footer)
+        self.assertIn("Q quit", footer)
+        destination = ui.locate("Drop commands here")
+        ui.mouse(*ui.palette("add"), "press")
+        ui.mouse(*destination, "move")
+        ui.mouse(*destination, "release")
+        ui.wait_for("PICK FLOOR")
+        ui.keys("Escape")
+        self.assertEqual(ui.commands(), [])
+        time.sleep(2.4)
+        self.assertNotEqual(ui.screen().splitlines()[-1][:69], footer)
+
+    def test_narrow_palette_and_floor_pages(self) -> None:
+        """Reach lower palette commands and paged floor slots at the minimum terminal size."""
+        ui = self.terminal
+        ui.command("resize-window", "-t", "test", "-x", "112", "-y", "32")
+        ui.keys("/", "Down", "Down", "Down", "Enter")
+        ui.wait_for("Same sign")
+        x, y = ui.palette("inbox")
+        for _ in range(8):
+            ui.command("send-keys", "-t", "test", "-l", f"\x1b[<65;{x + 1};{y + 1}M")
+            time.sleep(0.06)
+        ui.wait_for("jumpifnegative")
+        ui.click_palette("jumpifnegative")
+        x, y = ui.palette("copyfrom")
+        ui.mouse(x, y, "press")
+        ui.mouse(x, y, "release")
+        ui.wait_for("PICK FLOOR")
+        x, y = ui.locate("[0]")
+        ui.command("send-keys", "-t", "test", "-l", f"\x1b[<65;{x + 1};{y + 1}M")
+        ui.wait_for("[5]")
+        x, y = ui.locate("[5]")
+        ui.mouse(x, y, "press")
+        ui.mouse(x, y, "release")
+        self.assertRegex(ui.screen(), r"copyfrom\s+5")
+
     def test_levels_and_solutions(self) -> None:
         """Choose with slash, save a win, restart, and restore the saved program."""
         ui = self.terminal
@@ -198,10 +301,10 @@ class DragTests(unittest.TestCase):
     def test_negative_jump_palette(self) -> None:
         """Restrict negative jumps to later levels and support dragging/linking their cards."""
         ui = self.terminal
-        self.assertNotIn("│ jumpifnegative │", ui.screen())
+        self.assertNotIn("jumpifnegative", ui.screen())
         ui.keys("/", "Down", "Down", "Down", "Enter")
         ui.wait_for("Same sign")
-        ui.wait_for("│ jumpifnegative │")
+        ui.wait_for("jumpifnegative")
         ui.click_palette("inbox")
         ui.drag_palette("jumpifnegative", ui.locate("Drop commands here"))
         ui.click_palette("outbox")
@@ -214,7 +317,7 @@ class DragTests(unittest.TestCase):
         self.assertEqual(ui.commands(), ["inbox", "jumpifnegative", "outbox"])
         ui.keys("/", "Up", "Enter")
         ui.wait_for("Triple it")
-        self.assertNotIn("│ jumpifnegative │", ui.screen())
+        self.assertNotIn("jumpifnegative", ui.screen())
 
     def test_insert_reorder_cancel(self) -> None:
         """Drop at the start/middle/end and preserve the program on cancellation."""
@@ -252,7 +355,8 @@ class DragTests(unittest.TestCase):
     def test_mouse_follow_preview(self) -> None:
         """Preserve the grabbed point and card size while following the pointer."""
         ui = self.terminal
-        token = "│ copyto │"
+        x, y = ui.palette("copyto")
+        token = re.search(r"│ copyto\s*│", ui.screen().splitlines()[y]).group()
         grab_x = len(token) // 2
         ui.mouse(*ui.palette("copyto"), "press")
         self.assertEqual(ui.screen().count(token), 1)
@@ -322,6 +426,101 @@ class DragTests(unittest.TestCase):
         self.assertEqual(ui.commands(), ["inbox", "outbox", "jump", "copyto"])
         self.assertIn("LANDING", ui.screen())
 
+    def test_outbox_latest_first(self) -> None:
+        """Keep chronological kernel output while showing the newest belt value at the top."""
+        ui = self.terminal
+        ui.keys("/", "Up", "Enter")
+        ui.wait_for("First day")
+        for name in ("inbox", "outbox", "inbox", "outbox"):
+            ui.click_palette(name)
+        ui.keys("Space")
+        ui.wait_for("SUCCESS", timeout=5)
+        lines = ui.screen().splitlines()
+        outbox_x = next(line.index("OUTBOX") for line in lines if "OUTBOX" in line)
+        output_rows = {
+            int(match.group(1)): y
+            for y, line in enumerate(lines)
+            for match in re.finditer(r"│\s*(-?\d+)\s*│", line)
+            if match.start() <= outbox_x < match.end()
+        }
+        self.assertLess(output_rows[2], output_rows[1])
+        self.assertIn("SUCCESS", ui.screen())
+
+    def test_distinct_jump_landings(self) -> None:
+        """Keep separate visual/movable landings even when jumps resolve to the same position."""
+        ui = self.terminal
+        for name in ("inbox", "outbox", "jump"):
+            ui.click_palette(name)
+        ui.keys("t")
+        x, y = ui.command_position(1)
+        ui.mouse(x, y, "press")
+        ui.mouse(x, y, "release")
+        ui.click_palette("jumpifzero")
+        ui.keys("t")
+        x, y = ui.locate("LANDING · jump #3")
+        ui.mouse(x, y, "press")
+        ui.mouse(x, y, "release")
+        self.assertEqual(ui.screen().count("LANDING · jump #"), 2)
+        self.assertRegex(
+            "\n".join(row[-9:] for row in ui.screen().splitlines()), r"[\u2801-\u28ff]"
+        )
+        self.assertLess(ui.locate("LANDING · jump #4")[1], ui.command_position(1)[1])
+        self.assertLess(ui.locate("LANDING · jump #3")[1], ui.command_position(1)[1])
+        source = ui.locate("LANDING · jump #3")
+        x, y = ui.command_position(2)
+        ui.mouse(*source, "press")
+        ui.mouse(x, y - 1, "move")
+        ui.mouse(x, y - 1, "release")
+        ui.wait_for("Landing moved")
+        self.assertLess(ui.locate("LANDING · jump #4")[1], ui.command_position(1)[1])
+        self.assertGreater(ui.locate("LANDING · jump #3")[1], ui.command_position(1)[1])
+        self.assertLess(ui.locate("LANDING · jump #3")[1], ui.command_position(2)[1])
+        ui.keys("Delete")
+        self.assertNotIn("LANDING · jump #3", ui.screen())
+        self.assertIn("LANDING · jump #4", ui.screen())
+        self.assertEqual(ui.commands(), ["inbox", "outbox", "jump", "jumpifzero"])
+
+    def test_insert_above_and_below_landing(self) -> None:
+        """Use the landing's top edge for insertion above and its body for insertion below."""
+        ui = self.terminal
+        for name in ("inbox", "outbox", "jump"):
+            ui.click_palette(name)
+        ui.keys("t", "Up", "Up", "Enter")
+        x, y = ui.locate("LANDING")
+        ui.drag_palette("inbox", (x, y - 1))
+        self.assertEqual(ui.commands(), ["inbox", "inbox", "outbox", "jump"])
+        self.assertLess(ui.command_position(1)[1], ui.locate("LANDING")[1])
+        self.assertLess(ui.locate("LANDING")[1], ui.command_position(2)[1])
+        ui.drag_palette("outbox", ui.locate("LANDING"))
+        self.assertEqual(ui.commands(), ["inbox", "outbox", "inbox", "outbox", "jump"])
+        self.assertLess(ui.command_position(1)[1], ui.locate("LANDING")[1])
+        self.assertLess(ui.locate("LANDING")[1], ui.command_position(2)[1])
+
+    def test_drag_landing(self) -> None:
+        """Move a landing independently, retain its jump, and execute the new destination."""
+        ui = self.terminal
+        for name in ("inbox", "outbox", "jump"):
+            ui.click_palette(name)
+        ui.keys("t", "Up", "Up", "Enter")
+        source = ui.locate("LANDING")
+        x, y = ui.command_position(2)
+        ui.mouse(*source, "press")
+        ui.mouse(x, y - 1, "move")
+        ui.wait_for("INSERT landing")
+        ui.mouse(x, y - 1, "release")
+        ui.wait_for("Landing moved")
+        self.assertEqual(ui.commands(), ["inbox", "outbox", "jump"])
+        self.assertLess(ui.command_position(1)[1], ui.locate("LANDING")[1])
+        self.assertLess(ui.locate("LANDING")[1], ui.command_position(2)[1])
+        before = ui.locate("LANDING")
+        ui.mouse(*before, "press")
+        ui.mouse(20, 20, "move")
+        ui.keys("Escape")
+        self.assertEqual(ui.locate("LANDING"), before)
+        ui.mouse(20, 20, "release")
+        ui.keys("Space")
+        ui.wait_for("ERROR #2", timeout=5)
+
     def test_drag_scroll(self) -> None:
         """Scroll to the start when dragging above a long program's visible cards."""
         ui = self.terminal
@@ -329,7 +528,7 @@ class DragTests(unittest.TestCase):
             ui.click_palette("inbox")
         ui.mouse(*ui.palette("outbox"), "press")
         title_y = next((y for y, line in enumerate(ui.screen().splitlines()) if "COMMANDS" in line))
-        ui.mouse(110, title_y + 7, "move")
+        ui.mouse(137, title_y + 1, "move")
         stack_left = ui.palette("inbox")[0]
         deadline = time.monotonic() + 4
         first_position = None

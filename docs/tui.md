@@ -15,6 +15,8 @@ forcing a dark background. Clawd's introductory rainbow uses RGB colors.
 The left workroom displays the remaining input belt, the robot's current hand,
 numbered floor slots, and the output belt. The right panel shows the level task,
 target output, available instruction palette, and scrollable command cards.
+OUTBOX displays the newest output at the top and older values below; the kernel
+retains chronological output order for checking the solution.
 Playback controls sit below the left workroom; the command panel uses the full
 remaining terminal height, with editing controls and hints at its own bottom.
 The gold card with a triangle is the current instruction. The blue card is the
@@ -46,26 +48,64 @@ are shown in the workroom without discarding the successful run.
 
 ## Building a program
 
+The command panel has a vertical palette on the left and compact PROGRAM cards
+on the right. Jump routes occupy a fixed pixel gutter to the right of the cards.
+The palette and program scroll independently; use the mouse wheel over a short
+palette to reach hidden instructions. PROGRAM cards are capped at about 28
+terminal columns, so they stay compact on wide terminals.
+
 Drag an instruction from the palette into the program stack. A floating rounded
 card keeps the original card's size and contents, with the exact grabbed point
 anchored to the pointer. It clamps at terminal edges and disappears on drop or
 cancellation. The insertion line
-shows where it will be placed; the program changes only on release. Drop outside
-the stack or press Esc to cancel. Drag existing command cards to reorder them.
+shows where it will be placed; the program changes only on release. New palette
+commands dropped outside the stack are cancelled. Drag existing command cards
+within PROGRAM to reorder, or outside the entire command panel to delete. Drops
+inside the panel but outside PROGRAM cancel a move. Esc always cancels a drag.
 The stack scrolls when a dragged card is held near its top or bottom edge.
 
 Click a command card, then click an instruction in the palette to insert after
 it, or use Tab and Enter on palette buttons. The palette contains only
 instructions allowed in the selected level.
-For floor instructions, select the card, edit the boxed floor index, then press
-Enter or click **Set floor**. Delete removes the selected card. A plain drop
+After inserting a floor instruction, click the actual floor cell in the workroom.
+Hovering a cell marks its four corners. Wheel over the floor to page through
+large floors. **F** reopens floor selection for an existing selected instruction.
+An incomplete new instruction is removed on Esc; existing operands remain
+unchanged when cancelled. Playback cannot start during parameter selection.
+Delete removes the selected card. Up/Down still select command cards. A plain drop
 prompt marks the append position; ordinary insertions do not leave empty cards.
 
-Select a jump card and press **T** or **Link [T]**. Select its destination with
+Inserting a jump immediately opens destination selection. A pixel arrow in the
+right gutter follows the mouse vertically, with a landing marker on the hovered
+card. Select an existing jump and press **T** to relink it. Select its destination with
 Up/Down then Enter, or click the destination. Linking to an ordinary command
 creates an empty landing card immediately before it. Pixel-block arrows point
-from jump cards to these empty landing cards. Multiple jumps can share a
-landing card.
+from jump cards to these empty landing cards. Each jump owns a separate landing
+card, labelled with its source instruction number. Several adjacent landings
+can resolve to the same executable instruction, but remain independently movable.
+Relinking onto another jump's landing repositions the source's own card;
+it never merges the cards. Arrows use sampled half-ellipses in the right-hand
+gutter, with two-subpixel strokes and compact pixel arrowheads. Braille cells
+provide subcharacter resolution, and wide curve lanes keep the arc visible.
+Live destination previews use the same curves.
+Long programs auto-scroll
+when the pointer is held at the top or bottom during dragging or jump selection.
+
+All shortcuts, including `/` and `Q`, share one row beneath the workroom. When
+the row is too narrow, its text scrolls continuously right-to-left and wraps
+back to the start after a small gap. The command panel has no separate shortcut row.
+
+Drop on a landing's top edge to insert above it; drop on its body to insert
+below it. Inserting above leaves the jump aimed at the instruction following
+the landing, while inserting below makes the new command its destination.
+
+Landing cards can also be dragged to a new insertion boundary. Their stable IDs
+stay unchanged, so only the owning jump follows the moved landing and its numeric
+destination is recomputed. An end landing remains linked but unresolved until
+an instruction is placed below it. The unbound append prompt cannot be dragged.
+Dragging a landing outside the command panel deletes it and disconnects its
+owning jump; Esc cancels the move. Saved programs restore distinct landing cards
+even when multiple numeric jump targets are equal.
 
 Landing cards are editor objects rather than executable instructions. A jump
 resolves to the first command below its landing card. Inserting or deleting

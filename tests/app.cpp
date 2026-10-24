@@ -145,9 +145,77 @@ void drop_tests() {
       linked.compile().program.instructions[0].text == "jump 3",
     "moving a jump must preserve its landing and recompute the ordinal"
   );
-  check(!linked.move_before(landing, inserted), "landing cards must not become draggable commands");
+  check(linked.move_before(landing, inserted), "linked landing cards must be movable");
+  check(
+    linked.find(jump)->target == landing &&
+      linked.compile().program.instructions[0].text == "jump 2",
+    "moving a landing must preserve its ID and update the compiled destination"
+  );
+  check(linked.move_before(landing, 0), "a landing must be movable to the end");
+  check(
+    linked.find(jump)->target == landing &&
+      linked.compile().program.instructions[0].text == "jump 0",
+    "an end landing must remain linked while unresolved"
+  );
+  check(
+    linked.move_before(landing, ids[1]),
+    "an end landing must be movable back before a command"
+  );
+  check(
+    linked.compile().program.instructions[0].text == "jump 4",
+    "moving an end landing back must restore a numeric target"
+  );
+  check(
+    !linked.move_before(linked.rows().back().id, inserted),
+    "the unbound drop prompt cannot move"
+  );
   linked.erase(jump);
   check(linked.find(landing) == nullptr, "unreferenced landing cards must be cleaned up");
+  hrm_app::Editor shared({"jump 3", "jumpifzero 3", "inbox", "outbox"});
+  const auto shared_ids = shared.compile().instruction_rows;
+  const auto first_landing = shared.find(shared_ids[0])->target;
+  const auto second_landing = shared.find(shared_ids[1])->target;
+  check(first_landing != second_landing, "jumps to the same instruction need distinct landings");
+  check(
+    shared.compile().program.instructions[0].text == "jump 3" &&
+      shared.compile().program.instructions[1].text == "jumpifzero 3",
+    "distinct landing cards may resolve to the same executable position"
+  );
+  check(shared.move_before(first_landing, shared_ids[3]), "an owned landing must move");
+  check(
+    shared.find(shared_ids[0])->target == first_landing &&
+      shared.find(shared_ids[1])->target == second_landing &&
+      shared.compile().program.instructions[0].text == "jump 4" &&
+      shared.compile().program.instructions[1].text == "jumpifzero 3",
+    "moving one landing must not move another jump's destination"
+  );
+  check(
+    shared.set_target(shared_ids[0], second_landing) == first_landing &&
+      shared.find(shared_ids[1])->target == second_landing,
+    "relinking onto another landing must reposition the source's own card"
+  );
+  check(
+    shared.compile().program.instructions[0].text == "jump 3" &&
+      shared.compile().program.instructions[1].text == "jumpifzero 3",
+    "separate landings at the same location must still compile to the same target"
+  );
+  const auto round_trip = shared.compile();
+  std::vector<std::string> source;
+  for (const auto &instruction : round_trip.program.instructions) {
+    source.push_back(instruction.text);
+  }
+  hrm_app::Editor restored(source);
+  const auto restored_ids = restored.compile().instruction_rows;
+  check(
+    restored.find(restored_ids[0])->target != restored.find(restored_ids[1])->target,
+    "saved/imported programs must restore one distinct landing per jump"
+  );
+  shared.erase(first_landing);
+  check(
+    shared.find(shared_ids[0])->target == 0 &&
+      shared.find(shared_ids[1])->target == second_landing && shared.find(second_landing),
+    "deleting one landing must not disconnect another jump"
+  );
 }
 
 /// Verify forward execution, reset, and replay before ordinary and terminal steps.

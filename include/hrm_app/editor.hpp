@@ -58,16 +58,16 @@ public:
   /// @return The new stable command ID, or zero for a stale destination without changing the
   /// editor.
   RowId insert_before(RowId before, hrm::Opcode opcode, std::string operand = "0");
-  /// Reorder a command while preserving its ID, operand, and outgoing jump link.
+  /// Reorder a command or linked landing while preserving its stable ID and jump references.
   ///
-  /// @param source Existing command ID; landing cards cannot be moved as commands.
+  /// @param source Existing command or linked landing ID; the unbound drop prompt cannot move.
   /// @param before Destination row ID, or zero to append.
   /// @return True when the order changes; false for invalid destinations or no-op drops.
   bool move_before(RowId source, RowId before);
-  /// Ensure an empty landing immediately precedes a destination.
+  /// Create a distinct empty landing immediately before a destination.
   ///
   /// @param before Destination row ID; an absent ID requests an end landing.
-  /// @return An existing adjacent landing ID or a new empty landing ID.
+  /// @return A new landing ID, independently movable even beside another landing.
   RowId insert_landing(RowId before);
   /// Remove a row and disconnect references to a deleted landing.
   ///
@@ -75,11 +75,11 @@ public:
   void erase(RowId id);
   /// Set a floor command's operand text without eagerly validating it.
   void set_operand(RowId id, std::string operand);
-  /// Link a jump to an empty landing card before the selected destination.
+  /// Position this jump's own landing before the destination without sharing another jump's card.
   ///
   /// @param jump Source unconditional or conditional jump command ID.
   /// @param destination Existing command or landing row ID.
-  /// @return The stable landing ID, or zero when either endpoint is invalid.
+  /// @return The jump's existing landing ID or a fresh owned landing; zero for invalid endpoints.
   RowId set_target(RowId jump, RowId destination);
   /// Lower editor rows to kernel instructions and a source-row mapping.
   ///

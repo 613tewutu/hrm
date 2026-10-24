@@ -102,7 +102,12 @@ bool Editor::move_before(RowId source, RowId before) {
   const auto original = std::find_if(rows_.begin(), rows_.end(), [source](const auto &row) {
     return row.id == source;
   });
-  if (original == rows_.end() || original->landing || source == before) {
+  if (original == rows_.end() || source == before) {
+    return false;
+  }
+  if (original->landing && std::none_of(rows_.begin(), rows_.end(), [source](const auto &row) {
+        return !row.landing && row.target == source;
+      })) {
     return false;
   }
   const bool terminal_linked = std::any_of(rows_.begin(), rows_.end(), [&](const auto &row) {
@@ -160,12 +165,6 @@ RowId Editor::insert_landing(RowId before) {
   auto position = std::find_if(rows_.begin(), rows_.end(), [before](const auto &row) {
     return row.id == before;
   });
-  if (position != rows_.end() && position->landing) {
-    return position->id;
-  }
-  if (position != rows_.begin() && (position - 1)->landing) {
-    return (position - 1)->id;
-  }
   CommandRow row;
   row.id = next_id_++;
   const auto id = row.id;
@@ -203,7 +202,14 @@ RowId Editor::set_target(RowId jump, RowId destination) {
   if (!source || source->landing || !is_jump(source->opcode) || !find(destination)) {
     return 0;
   }
-  const RowId landing = insert_landing(destination);
+  const RowId previous = source->target;
+  if (previous == destination) {
+    return previous;
+  }
+  const RowId landing = previous && find(previous) ? previous : insert_landing(destination);
+  if (landing == previous) {
+    move_before(landing, destination);
+  }
   for (auto &row : rows_) {
     if (row.id == jump) {
       row.target = landing;
